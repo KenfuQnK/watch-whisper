@@ -165,7 +165,7 @@ const App: React.FC = () => {
           addedAt: Date.now(),
           userStatus: {},
           seasons: enrichedResult.seasons || [],
-          platform: '', // Default empty
+          platform: [], // Changed from '' to []
           releaseDate: '',
           rating: 0,
           trailerUrl: enrichedResult.trailerUrl || '',

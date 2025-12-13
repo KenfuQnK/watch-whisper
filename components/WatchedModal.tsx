@@ -1,66 +1,135 @@
 import React, { useState, useEffect } from 'react';
-import { MediaItem, User, MediaType, Platform } from '../types';
+import { MediaItem, User, MediaType, Platform, WatchInfo, CollectionType } from '../types';
 import Avatar from './Avatar';
-import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star, Youtube, ExternalLink, Play } from 'lucide-react';
+import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star, Youtube, ExternalLink, Ticket, Download, Zap, Wifi } from 'lucide-react';
 
 interface WatchedModalProps {
   item: MediaItem | null;
   users: User[];
   isOpen: boolean;
   onClose: () => void;
+  // NOTE: onUpdateStatus is deprecated in favor of onUpdateItem handling everything on save
   onUpdateStatus: (userId: string, changes: any) => void;
   onUpdateItem: (itemId: string, changes: Partial<MediaItem>) => void;
   onDelete: (itemId: string) => void;
 }
 
-const PLATFORMS: Platform[] = ['Netflix', 'HBO', 'Disney+', 'AppleTV', 'Prime', 'Stremio', 'Torrent', 'Online', 'Cine'];
+const PLATFORM_OPTIONS: { name: string; color: string; icon: React.ReactNode }[] = [
+    { name: 'Netflix', color: 'bg-red-600', icon: <span className="font-bold text-lg">N</span> },
+    { name: 'HBO', color: 'bg-purple-900', icon: <span className="font-bold text-lg">HBO</span> },
+    { name: 'Disney+', color: 'bg-blue-600', icon: <span className="font-bold text-lg">D+</span> },
+    { name: 'Prime', color: 'bg-sky-500', icon: <span className="font-bold text-lg">Prime</span> },
+    { name: 'AppleTV', color: 'bg-gray-200 text-black', icon: <span className="font-bold text-lg"></span> },
+    { name: 'Stremio', color: 'bg-indigo-500', icon: <Zap /> },
+    { name: 'Torrent', color: 'bg-green-600', icon: <Download /> },
+    { name: 'Online', color: 'bg-orange-500', icon: <Wifi /> },
+    { name: 'Cine', color: 'bg-yellow-500', icon: <Ticket /> },
+];
 
 const WatchedModal: React.FC<WatchedModalProps> = ({ 
-  item, 
+  item: propItem, 
   users, 
   isOpen, 
   onClose, 
-  onUpdateStatus,
   onUpdateItem,
   onDelete
 }) => {
+  // --- LOCAL STATE (Prevents DB flickering) ---
+  const [localItem, setLocalItem] = useState<MediaItem | null>(null);
+  
+  // UI States
   const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({1: true});
   const [imageState, setImageState] = useState<0 | 1 | 2>(0);
   const [isPlayingTrailer, setIsPlayingTrailer] = useState(false);
   const [isEditingTrailer, setIsEditingTrailer] = useState(false);
   const [trailerInput, setTrailerInput] = useState('');
+  const [showPlatformSelector, setShowPlatformSelector] = useState(false);
 
-  // CORRECCIÓN: Solo reiniciamos el estado visual si cambia el ID del item (abrimos otra peli/serie).
+  // Initialize Local State when Modal Opens or Prop Item ID changes (navigating between items)
   useEffect(() => {
-    if (item?.id) {
+    if (propItem) {
+        // Deep copy to ensure we don't mutate prop references
+        setLocalItem(JSON.parse(JSON.stringify(propItem)));
+        
+        // Reset UI states
         setImageState(0);
         setOpenSeasons({1: true});
         setIsPlayingTrailer(false);
         setIsEditingTrailer(false);
-        setTrailerInput(item.trailerUrl || '');
+        setTrailerInput(propItem.trailerUrl || '');
+        setShowPlatformSelector(false);
+    } else {
+        setLocalItem(null);
     }
-  }, [item?.id, item?.trailerUrl]);
+  }, [propItem?.id, isOpen]); // Only update if ID changes or modal re-opens
 
-  if (!isOpen || !item) return null;
+  // --- SAVE & CLOSE LOGIC ---
+  const handleSaveAndClose = () => {
+      if (localItem && propItem) {
+          // Check if there are actual changes? (Optional optimization, but we'll just save)
+          // Also need to recalculate collectionId based on watch status
+          const updatedUserStatus = localItem.userStatus;
+          const isStarted = Object.values(updatedUserStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
+          const newCollectionId = isStarted ? CollectionType.WATCHED : CollectionType.WATCHLIST;
+          
+          onUpdateItem(localItem.id, {
+              ...localItem,
+              collectionId: newCollectionId
+          });
+      }
+      onClose();
+  };
+
+  if (!isOpen || !localItem) return null;
+
+  // --- HANDLERS (Mutate Local State) ---
+
+  const updateLocalItem = (changes: Partial<MediaItem>) => {
+      setLocalItem(prev => prev ? ({ ...prev, ...changes }) : null);
+  };
+
+  const updateLocalUserStatus = (userId: string, changes: Partial<WatchInfo>) => {
+      setLocalItem(prev => {
+          if (!prev) return null;
+          const currentStatus = prev.userStatus[userId] || { watched: false, watchedEpisodes: [] };
+          const newStatus = { ...currentStatus, ...changes };
+          
+          // Movie date logic
+          if (prev.type === MediaType.MOVIE) {
+              if (changes.watched === true && !currentStatus.date) newStatus.date = Date.now();
+              if (changes.watched === false) newStatus.date = undefined;
+          }
+
+          return {
+              ...prev,
+              userStatus: {
+                  ...prev.userStatus,
+                  [userId]: newStatus
+              }
+          };
+      });
+  };
 
   const handleImageError = () => {
-    if (imageState === 0 && item.backupPosterUrl) {
+    if (imageState === 0 && localItem.backupPosterUrl) {
         setImageState(1);
     } else {
         setImageState(2);
     }
   };
 
-  let currentSrc = item.posterUrl;
-  if (imageState === 1 && item.backupPosterUrl) currentSrc = item.backupPosterUrl;
+  let currentSrc = localItem.posterUrl;
+  if (imageState === 1 && localItem.backupPosterUrl) currentSrc = localItem.backupPosterUrl;
 
   const toggleSeason = (seasonNum: number) => {
     setOpenSeasons(prev => ({...prev, [seasonNum]: !prev[seasonNum]}));
   };
 
+  // --- WATCH STATUS LOGIC (Local) ---
+
   const handleToggleSeason = (e: React.MouseEvent, userId: string, seasonNum: number, episodeCount: number) => {
     e.stopPropagation();
-    const userStatus = item.userStatus[userId] || { watched: false, watchedEpisodes: [] };
+    const userStatus = localItem.userStatus[userId] || { watched: false, watchedEpisodes: [] };
     const currentEps = userStatus.watchedEpisodes || [];
     
     const seasonEpisodeKeys = Array.from({ length: episodeCount }, (_, i) => `S${seasonNum}_E${i + 1}`);
@@ -74,12 +143,12 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
         newEps = Array.from(uniqueEps);
     }
 
-    onUpdateStatus(userId, { watchedEpisodes: newEps });
+    updateLocalUserStatus(userId, { watchedEpisodes: newEps });
   };
 
   const handleToggleEpisode = (userId: string, season: number, episode: number) => {
       const epKey = `S${season}_E${episode}`;
-      const userStatus = item.userStatus[userId] || { watched: false, watchedEpisodes: [] };
+      const userStatus = localItem.userStatus[userId] || { watched: false, watchedEpisodes: [] };
       const currentEps = userStatus.watchedEpisodes || [];
       
       let newEps;
@@ -89,7 +158,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
           newEps = [...currentEps, epKey];
       }
 
-      onUpdateStatus(userId, { watchedEpisodes: newEps });
+      updateLocalUserStatus(userId, { watchedEpisodes: newEps });
   };
 
   // --- TRAILER HELPERS ---
@@ -101,19 +170,29 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
   };
 
   const handleSaveTrailer = () => {
-      onUpdateItem(item.id, { trailerUrl: trailerInput });
+      updateLocalItem({ trailerUrl: trailerInput });
       setIsEditingTrailer(false);
       if (trailerInput && getYoutubeEmbedUrl(trailerInput)) {
           setIsPlayingTrailer(true);
       }
   };
 
+  // --- PLATFORM HELPER ---
+  const togglePlatform = (pName: string) => {
+      const current = localItem.platform || [];
+      if (current.includes(pName)) {
+          updateLocalItem({ platform: current.filter(p => p !== pName) });
+      } else {
+          updateLocalItem({ platform: [...current, pName] });
+      }
+  };
+
   // --- RATING HELPER ---
   const RatingButton = ({ value, icon, activeColor, label }: { value: number, icon: React.ReactNode, activeColor: string, label?: string }) => {
-      const isSelected = item.rating === value;
+      const isSelected = localItem.rating === value;
       return (
           <button
-              onClick={() => onUpdateItem(item.id, { rating: isSelected ? undefined : value })}
+              onClick={() => updateLocalItem({ rating: isSelected ? undefined : value })}
               className={`flex-1 flex flex-col items-center justify-center py-2 rounded-lg transition-all border border-slate-700/50 ${isSelected ? activeColor + ' bg-opacity-20 text-white' : 'hover:bg-slate-700 text-slate-500 hover:text-slate-300'}`}
               style={{ backgroundColor: isSelected ? 'rgba(255,255,255,0.1)' : undefined }}
               title={label}
@@ -127,20 +206,21 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop closes and saves */}
       <div 
         className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
+        onClick={handleSaveAndClose}
       />
 
       <div className="relative bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-slate-700 transform transition-all flex flex-col max-h-[90vh]">
         
         {/* Header Image or Trailer */}
         <div className="h-40 lg:h-52 w-full relative shrink-0 group bg-slate-900">
-           {isPlayingTrailer && item.trailerUrl ? (
+           {isPlayingTrailer && localItem.trailerUrl ? (
                <div className="w-full h-full bg-black relative">
                    <iframe 
                         className="w-full h-full"
-                        src={getYoutubeEmbedUrl(item.trailerUrl) || ''}
+                        src={getYoutubeEmbedUrl(localItem.trailerUrl) || ''}
                         title="Trailer"
                         frameBorder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -158,21 +238,21 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                {imageState < 2 && currentSrc ? (
                   <img 
                     src={currentSrc} 
-                    alt={item.title} 
+                    alt={localItem.title} 
                     className="w-full h-full object-cover opacity-60"
                     onError={handleImageError}
                   />
                ) : (
                  <div className="w-full h-full flex items-center justify-center bg-slate-900 opacity-60">
                      <div className="text-4xl opacity-50">
-                         {item.type === MediaType.MOVIE ? <Film size={64} /> : <Tv size={64} />}
+                         {localItem.type === MediaType.MOVIE ? <Film size={64} /> : <Tv size={64} />}
                      </div>
                  </div>
                )}
               
               <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-800" />
               <button 
-                onClick={onClose}
+                onClick={handleSaveAndClose}
                 className="absolute top-3 right-3 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors z-10"
               >
                 <X size={20} />
@@ -180,7 +260,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
 
               {/* Play Trailer Button on Header */}
               <div className="absolute bottom-4 left-6 z-10 flex gap-2">
-                 {item.trailerUrl ? (
+                 {localItem.trailerUrl ? (
                     <button 
                         onClick={() => setIsPlayingTrailer(true)}
                         className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur shadow-lg transition-transform hover:scale-105"
@@ -211,15 +291,15 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 <div>
                     <div className="flex gap-2 mb-2">
                         <span className="bg-indigo-500/80 backdrop-blur text-xs px-2 py-0.5 rounded text-white font-bold uppercase">
-                            {item.type === MediaType.MOVIE ? 'Película' : 'Serie'}
+                            {localItem.type === MediaType.MOVIE ? 'Película' : 'Serie'}
                         </span>
                         <span className="bg-slate-700/80 backdrop-blur text-xs px-2 py-0.5 rounded text-slate-300">
-                            {item.year}
+                            {localItem.year}
                         </span>
                     </div>
                     <div className="flex items-start justify-between gap-2">
-                         <h2 className="text-3xl font-bold text-white mb-2 leading-tight">{item.title}</h2>
-                         {(item.trailerUrl || isEditingTrailer) && (
+                         <h2 className="text-3xl font-bold text-white mb-2 leading-tight">{localItem.title}</h2>
+                         {(localItem.trailerUrl || isEditingTrailer) && (
                              <button onClick={() => setIsEditingTrailer(!isEditingTrailer)} className="text-slate-500 hover:text-white p-1" title="Editar URL Trailer">
                                  <ExternalLink size={14} />
                              </button>
@@ -238,12 +318,12 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                              />
                              <div className="flex justify-end gap-2">
                                  <button onClick={() => setIsEditingTrailer(false)} className="text-xs text-slate-400 hover:text-white px-2">Cancelar</button>
-                                 <button onClick={handleSaveTrailer} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold">Guardar</button>
+                                 <button onClick={handleSaveTrailer} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold">OK</button>
                              </div>
                         </div>
                     )}
 
-                    <p className="text-slate-300 text-sm leading-relaxed">{item.description}</p>
+                    <p className="text-slate-300 text-sm leading-relaxed">{localItem.description}</p>
                 </div>
 
                 {/* Rating System */}
@@ -268,34 +348,60 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 </div>
 
                 {/* Controls: Platform & Date */}
-                <div className="grid grid-cols-2 gap-4 bg-slate-900/40 p-3 rounded-xl border border-slate-700/50">
+                <div className="grid grid-cols-2 gap-4 bg-slate-900/40 p-3 rounded-xl border border-slate-700/50 relative">
+                    {/* Platform Selector */}
                     <div>
                         <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 flex items-center gap-1">
-                            <MonitorPlay size={10} /> Plataforma
+                            <MonitorPlay size={10} /> Plataformas
                         </label>
-                        <div className="relative">
-                            <select 
-                                value={item.platform || ''}
-                                onChange={(e) => onUpdateItem(item.id, { platform: e.target.value as Platform })}
-                                className="w-full bg-slate-800 border border-slate-700 text-xs text-white rounded-lg py-1.5 pl-2 pr-6 appearance-none focus:outline-none focus:border-indigo-500"
-                            >
-                                <option value="">Seleccionar...</option>
-                                {PLATFORMS.map(p => (
-                                    <option key={p} value={p}>{p}</option>
-                                ))}
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
-                        </div>
+                        <button 
+                            onClick={() => setShowPlatformSelector(!showPlatformSelector)}
+                            className="w-full bg-slate-800 border border-slate-700 text-xs text-left text-white rounded-lg py-2 px-3 flex justify-between items-center hover:bg-slate-700 transition-colors"
+                        >
+                            <span className="truncate">
+                                {localItem.platform && localItem.platform.length > 0 
+                                    ? localItem.platform.join(', ') 
+                                    : 'Seleccionar...'}
+                            </span>
+                            <ChevronDown size={12} className="text-slate-400" />
+                        </button>
+                        
+                        {/* MOSAIC POPUP FOR PLATFORMS */}
+                        {showPlatformSelector && (
+                            <div className="absolute top-full left-0 mt-2 z-50 w-64 md:w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-3 animate-in fade-in zoom-in-95">
+                                <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700">
+                                    <span className="text-xs font-bold text-slate-400">Elige plataformas:</span>
+                                    <button onClick={() => setShowPlatformSelector(false)} className="text-slate-400 hover:text-white"><X size={14}/></button>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {PLATFORM_OPTIONS.map(opt => {
+                                        const isSelected = localItem.platform?.includes(opt.name);
+                                        return (
+                                            <button 
+                                                key={opt.name}
+                                                onClick={() => togglePlatform(opt.name)}
+                                                className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all aspect-square border-2 ${isSelected ? 'border-white/50 ' + opt.color + ' text-white' : 'border-transparent bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                                            >
+                                                <div className="mb-1">{opt.icon}</div>
+                                                <span className="text-[10px] font-bold leading-none">{opt.name}</span>
+                                                {isSelected && <div className="absolute top-1 right-1 bg-white text-black rounded-full p-0.5"><Check size={8} /></div>}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
                     </div>
+
                     <div>
                         <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 flex items-center gap-1">
                             <Calendar size={10} /> Estreno
                         </label>
                         <input 
                             type="date" 
-                            value={item.releaseDate || ''}
-                            onChange={(e) => onUpdateItem(item.id, { releaseDate: e.target.value })}
-                            className="w-full bg-slate-800 border border-slate-700 text-xs text-white rounded-lg py-1 px-2 focus:outline-none focus:border-indigo-500"
+                            value={localItem.releaseDate || ''}
+                            onChange={(e) => updateLocalItem({ releaseDate: e.target.value })}
+                            className="w-full bg-slate-800 border border-slate-700 text-xs text-white rounded-lg py-1.5 px-2 focus:outline-none focus:border-indigo-500"
                         />
                     </div>
                 </div>
@@ -303,7 +409,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 {/* Delete Button (Visible on Desktop here) */}
                 <div className="hidden lg:block pt-4">
                     <button 
-                        onClick={() => { onDelete(item.id); onClose(); }}
+                        onClick={() => { onDelete(localItem.id); onClose(); }}
                         className="flex items-center gap-2 text-red-400 text-xs hover:text-red-300 hover:bg-red-400/10 px-3 py-2 rounded-lg transition-colors w-full justify-center"
                     >
                         <Trash2 size={14} /> Eliminar Título
@@ -315,27 +421,28 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
             <div className="lg:col-span-7 space-y-6">
                 
                 {/* MOVIE LOGIC */}
-                {item.type === MediaType.MOVIE && (
+                {localItem.type === MediaType.MOVIE && (
                     <div className="bg-slate-900/30 rounded-xl p-4 border border-slate-700/30">
                         <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">
                         Estado de Visualización
                         </h3>
                         <div className="space-y-3">
                             {users.map(user => {
-                                const status = item.userStatus[user.id] || { watched: false };
+                                const status = localItem.userStatus[user.id] || { watched: false };
                                 return (
                                 <div key={user.id} className="bg-slate-800 rounded-xl p-4 border border-slate-700/50 flex items-center justify-between shadow-sm">
                                     <div className="flex items-center gap-3">
-                                        <Avatar user={user} size="md" selected={status.watched} onClick={() => onUpdateStatus(user.id, { watched: !status.watched })} />
+                                        <Avatar user={user} size="md" selected={status.watched} onClick={() => updateLocalUserStatus(user.id, { watched: !status.watched })} />
                                         <div className="flex flex-col">
                                             <span className="font-medium text-white">{user.name}</span>
                                             {status.watched && status.date && (
                                                 <span className="text-[10px] text-slate-400">Visto el {new Date(status.date).toLocaleDateString('es-ES')}</span>
                                             )}
+                                            {status.watched && !status.date && <span className="text-[10px] text-green-400 font-bold">Recién marcado</span>}
                                         </div>
                                     </div>
                                     <button 
-                                        onClick={() => onUpdateStatus(user.id, { watched: !status.watched })}
+                                        onClick={() => updateLocalUserStatus(user.id, { watched: !status.watched })}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${status.watched ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'}`}
                                     >
                                         {status.watched ? 'VISTO' : 'NO VISTO'}
@@ -348,7 +455,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 )}
 
                 {/* SERIES LOGIC */}
-                {item.type === MediaType.SERIES && (
+                {localItem.type === MediaType.SERIES && (
                     <div className="space-y-4">
                     <div className="flex justify-between items-end border-b border-slate-700 pb-2 sticky top-0 bg-slate-800/95 backdrop-blur z-20 pt-2">
                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">
@@ -364,13 +471,13 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                             </div>
                     </div>
 
-                    {(!item.seasons || item.seasons.length === 0) ? (
+                    {(!localItem.seasons || localItem.seasons.length === 0) ? (
                         <div className="text-center py-6 bg-slate-800/50 rounded-xl border border-dashed border-slate-700">
                             <p className="text-slate-400 text-sm mb-1">Falta información de episodios</p>
                             <p className="text-slate-600 text-xs">Añade los episodios manualmente o busca de nuevo.</p>
                         </div>
                     ) : (
-                        item.seasons.map(season => {
+                        localItem.seasons.map(season => {
                             const isOpen = openSeasons[season.seasonNumber];
                             const episodeCount = season.episodeCount;
                             const seasonKeys = Array.from({ length: episodeCount }, (_, i) => `S${season.seasonNumber}_E${i + 1}`);
@@ -393,7 +500,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
 
                                         <div className="flex items-center gap-3">
                                                 {users.map(u => {
-                                                    const uStatus = item.userStatus[u.id];
+                                                    const uStatus = localItem.userStatus[u.id];
                                                     const watchedCount = uStatus?.watchedEpisodes?.filter(ep => seasonKeys.includes(ep)).length || 0;
                                                     const isFull = watchedCount === episodeCount;
                                                     const isNone = watchedCount === 0;
@@ -433,7 +540,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                                                             <span className="text-xs text-slate-300 font-mono">E{epNum}</span>
                                                             <div className="flex items-center gap-2">
                                                                 {users.map(user => {
-                                                                    const userStatus = item.userStatus[user.id];
+                                                                    const userStatus = localItem.userStatus[user.id];
                                                                     const isWatched = userStatus?.watchedEpisodes?.includes(epKey);
                                                                     
                                                                     return (
@@ -464,34 +571,27 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
           </div>
         </div>
 
-        {/* Footer (Only visible on small screens to save space on desktop since we have inline delete) */}
-        <div className="p-4 bg-slate-800 border-t border-slate-700 flex justify-between items-center shrink-0 lg:hidden">
+        {/* Footer (Mobile only logic removed, standardized footer) */}
+        <div className="p-4 bg-slate-800 border-t border-slate-700 flex justify-between items-center shrink-0 z-20">
              <button 
                onClick={() => {
-                 onDelete(item.id);
+                 onDelete(localItem.id);
                  onClose();
                }}
-               className="flex items-center gap-2 text-red-400 text-xs hover:text-red-300 hover:bg-red-400/10 px-3 py-2 rounded-lg transition-colors"
+               className="lg:hidden flex items-center gap-2 text-red-400 text-xs hover:text-red-300 hover:bg-red-400/10 px-3 py-2 rounded-lg transition-colors"
              >
                <Trash2 size={14} /> Eliminar
              </button>
              
-             <button 
-                onClick={onClose}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors shadow-lg shadow-indigo-500/20"
-             >
-                <Check size={16} /> Cerrar
-             </button>
-        </div>
-        
-        {/* Desktop Close Button (Floating) */}
-        <div className="hidden lg:flex absolute bottom-6 right-6 z-20">
-             <button 
-                onClick={onClose}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl font-bold text-base transition-colors shadow-xl shadow-indigo-900/50"
-             >
-                <Check size={20} /> Cerrar
-             </button>
+             {/* SAVE & CLOSE BUTTON */}
+             <div className="flex w-full justify-end">
+                <button 
+                    onClick={handleSaveAndClose}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors shadow-lg shadow-indigo-500/20"
+                >
+                    <Check size={16} /> Guardar y Cerrar
+                </button>
+             </div>
         </div>
       </div>
     </div>

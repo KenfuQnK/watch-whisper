@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MediaItem, User, MediaType, Platform } from '../types';
+import { MediaItem, User, MediaType } from '../types';
 import Avatar from './Avatar';
 import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
 
@@ -9,7 +9,7 @@ interface MediaCardProps {
   onClick: (item: MediaItem) => void;
 }
 
-const getPlatformColor = (p?: Platform) => {
+const getPlatformColor = (p: string) => {
     switch(p) {
         case 'Netflix': return 'bg-red-600 text-white';
         case 'HBO': return 'bg-purple-900 text-white';
@@ -20,7 +20,7 @@ const getPlatformColor = (p?: Platform) => {
         case 'Torrent': return 'bg-green-600 text-white';
         case 'Online': return 'bg-orange-500 text-white';
         case 'Cine': return 'bg-yellow-600 text-white';
-        default: return 'bg-slate-700 text-slate-300 hidden';
+        default: return 'bg-slate-700 text-slate-300';
     }
 }
 
@@ -61,6 +61,9 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
       }
   };
 
+  // Safe Platform Access (ensure array)
+  const platforms = Array.isArray(item.platform) ? item.platform : (item.platform ? [item.platform] : []);
+
   return (
     <div 
       onClick={() => onClick(item)}
@@ -92,7 +95,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
       </div>
 
       {/* Top Badges - ONLY ON HOVER */}
-      <div className="absolute top-3 left-3 flex flex-col gap-2 z-10 items-start opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+      <div className="absolute top-3 left-3 flex flex-col gap-2 z-10 items-start opacity-0 group-hover:opacity-100 transition-opacity duration-300 max-w-[80%]">
         <span className={`px-2 py-1 rounded-md text-xs font-bold uppercase tracking-wider text-white backdrop-blur-md shadow-lg ${item.type === MediaType.MOVIE ? 'bg-indigo-600/90' : 'bg-pink-600/90'}`}>
           <div className="flex items-center gap-1">
             {item.type === MediaType.MOVIE ? <Film size={12} /> : <Tv size={12} />}
@@ -100,11 +103,20 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
           </div>
         </span>
         
-        {/* Platform Badge */}
-        {item.platform && (
-             <span className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-lg ${getPlatformColor(item.platform)}`}>
-                 {item.platform}
-             </span>
+        {/* Platform Badges (Mosaic limit to 2 + counter) */}
+        {platforms.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+                {platforms.slice(0, 2).map(p => (
+                    <span key={p} className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-lg ${getPlatformColor(p)}`}>
+                        {p}
+                    </span>
+                ))}
+                {platforms.length > 2 && (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold shadow-lg bg-slate-700 text-white">
+                        +{platforms.length - 2}
+                    </span>
+                )}
+            </div>
         )}
       </div>
 

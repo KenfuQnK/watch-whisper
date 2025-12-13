@@ -43,7 +43,7 @@ export interface MediaItem {
   collectionId: CollectionType;
   
   // New Fields
-  platform?: Platform;
+  platform?: string[]; // Changed from Platform (single string) to string array
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
   trailerUrl?: string; // YouTube URL

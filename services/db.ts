@@ -4,41 +4,57 @@ import { MediaItem } from '../types';
 // --- MAPPING HELPERS ---
 // Translates between App types (camelCase) and DB columns (snake_case)
 
-const mapFromDb = (row: any): MediaItem => ({
-  id: row.id,
-  title: row.title,
-  type: row.type,
-  posterUrl: row.poster_url,
-  backupPosterUrl: row.backup_poster_url,
-  description: row.description,
-  year: row.year,
-  addedAt: parseInt(row.added_at), // BigInt comes as string sometimes from JSON
-  collectionId: row.collection_id,
-  platform: row.platform,
-  releaseDate: row.release_date,
-  rating: row.rating,
-  trailerUrl: row.trailer_url,
-  seasons: row.seasons,
-  userStatus: row.user_status || {}
-});
+const mapFromDb = (row: any): MediaItem => {
+  // Handle Platform: DB might be string (CSV) or null. Convert to Array.
+  let platforms: string[] = [];
+  if (row.platform) {
+      // If it's already an array (postgres array), use it. If string, split it.
+      platforms = Array.isArray(row.platform) 
+        ? row.platform 
+        : row.platform.split(',').filter((p: string) => p.trim() !== '');
+  }
 
-const mapToDb = (item: MediaItem) => ({
-  id: item.id,
-  title: item.title,
-  type: item.type,
-  poster_url: item.posterUrl,
-  backup_poster_url: item.backupPosterUrl,
-  description: item.description,
-  year: item.year,
-  added_at: item.addedAt,
-  collection_id: item.collectionId,
-  platform: item.platform,
-  release_date: item.releaseDate,
-  rating: item.rating,
-  trailer_url: item.trailerUrl,
-  seasons: item.seasons,
-  user_status: item.userStatus
-});
+  return {
+    id: row.id,
+    title: row.title,
+    type: row.type,
+    posterUrl: row.poster_url,
+    backupPosterUrl: row.backup_poster_url,
+    description: row.description,
+    year: row.year,
+    addedAt: parseInt(row.added_at), // BigInt comes as string sometimes from JSON
+    collectionId: row.collection_id,
+    platform: platforms,
+    releaseDate: row.release_date,
+    rating: row.rating,
+    trailerUrl: row.trailer_url,
+    seasons: row.seasons,
+    userStatus: row.user_status || {}
+  };
+};
+
+const mapToDb = (item: MediaItem) => {
+  // Handle Platform: Convert Array to CSV String for safer DB storage if column is text
+  const platformStr = item.platform ? item.platform.join(',') : null;
+
+  return {
+    id: item.id,
+    title: item.title,
+    type: item.type,
+    poster_url: item.posterUrl,
+    backup_poster_url: item.backupPosterUrl,
+    description: item.description,
+    year: item.year,
+    added_at: item.addedAt,
+    collection_id: item.collectionId,
+    platform: platformStr, 
+    release_date: item.releaseDate,
+    rating: item.rating,
+    trailer_url: item.trailerUrl,
+    seasons: item.seasons,
+    user_status: item.userStatus
+  };
+};
 
 // --- API METHODS ---
 
@@ -69,7 +85,11 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.posterUrl !== undefined) dbChanges.poster_url = changes.posterUrl;
   if (changes.backupPosterUrl !== undefined) dbChanges.backup_poster_url = changes.backupPosterUrl;
   if (changes.description !== undefined) dbChanges.description = changes.description;
-  if (changes.platform !== undefined) dbChanges.platform = changes.platform;
+  
+  if (changes.platform !== undefined) {
+      dbChanges.platform = Array.isArray(changes.platform) ? changes.platform.join(',') : changes.platform;
+  }
+
   if (changes.releaseDate !== undefined) dbChanges.release_date = changes.releaseDate;
   if (changes.rating !== undefined) dbChanges.rating = changes.rating;
   if (changes.trailerUrl !== undefined) dbChanges.trailer_url = changes.trailerUrl;
