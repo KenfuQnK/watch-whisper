@@ -87,12 +87,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
             </div>
         )}
         
-        {/* Gradient Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent opacity-90" />
+        {/* Gradient Overlay - ONLY ON HOVER */}
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
       </div>
 
-      {/* Top Badges */}
-      <div className="absolute top-3 left-3 flex flex-col gap-2 z-10 items-start">
+      {/* Top Badges - ONLY ON HOVER */}
+      <div className="absolute top-3 left-3 flex flex-col gap-2 z-10 items-start opacity-0 group-hover:opacity-100 transition-opacity duration-300">
         <span className={`px-2 py-1 rounded-md text-xs font-bold uppercase tracking-wider text-white backdrop-blur-md shadow-lg ${item.type === MediaType.MOVIE ? 'bg-indigo-600/90' : 'bg-pink-600/90'}`}>
           <div className="flex items-center gap-1">
             {item.type === MediaType.MOVIE ? <Film size={12} /> : <Tv size={12} />}
@@ -108,8 +108,8 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         )}
       </div>
 
-      {/* Watched Status (Avatars) & Rating */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-2 z-10">
+      {/* Watched Status (Avatars) & Rating - ONLY ON HOVER */}
+      <div className="absolute top-3 right-3 flex flex-col items-end gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
         <div className="flex -space-x-2">
             {usersWithActivity.map(user => (
             <Avatar key={user.id} user={user} size="sm" className="border-slate-900 ring-0" />
@@ -118,8 +118,8 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         {renderRating()}
       </div>
 
-      {/* Content */}
-      <div className="absolute bottom-0 left-0 right-0 p-4 transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300 z-10">
+      {/* Content - ONLY ON HOVER */}
+      <div className="absolute bottom-0 left-0 right-0 p-4 transform translate-y-2 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-300 z-10">
         <h3 className="text-white font-bold text-lg leading-tight mb-1 drop-shadow-md line-clamp-2">
           {item.title}
         </h3>

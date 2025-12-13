@@ -17,6 +17,7 @@ const mapFromDb = (row: any): MediaItem => ({
   platform: row.platform,
   releaseDate: row.release_date,
   rating: row.rating,
+  trailerUrl: row.trailer_url,
   seasons: row.seasons,
   userStatus: row.user_status || {}
 });
@@ -34,6 +35,7 @@ const mapToDb = (item: MediaItem) => ({
   platform: item.platform,
   release_date: item.releaseDate,
   rating: item.rating,
+  trailer_url: item.trailerUrl,
   seasons: item.seasons,
   user_status: item.userStatus
 });
@@ -70,6 +72,7 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.platform !== undefined) dbChanges.platform = changes.platform;
   if (changes.releaseDate !== undefined) dbChanges.release_date = changes.releaseDate;
   if (changes.rating !== undefined) dbChanges.rating = changes.rating;
+  if (changes.trailerUrl !== undefined) dbChanges.trailer_url = changes.trailerUrl;
   if (changes.seasons !== undefined) dbChanges.seasons = changes.seasons;
   if (changes.userStatus !== undefined) dbChanges.user_status = changes.userStatus;
   if (changes.collectionId !== undefined) dbChanges.collection_id = changes.collectionId;

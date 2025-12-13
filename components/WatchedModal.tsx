@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MediaItem, User, MediaType, Platform } from '../types';
 import Avatar from './Avatar';
-import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
+import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star, Youtube, ExternalLink, Play } from 'lucide-react';
 
 interface WatchedModalProps {
   item: MediaItem | null;
@@ -26,14 +26,20 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
 }) => {
   const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({1: true});
   const [imageState, setImageState] = useState<0 | 1 | 2>(0);
+  const [isPlayingTrailer, setIsPlayingTrailer] = useState(false);
+  const [isEditingTrailer, setIsEditingTrailer] = useState(false);
+  const [trailerInput, setTrailerInput] = useState('');
 
   // CORRECCIÓN: Solo reiniciamos el estado visual si cambia el ID del item (abrimos otra peli/serie).
   useEffect(() => {
     if (item?.id) {
         setImageState(0);
         setOpenSeasons({1: true});
+        setIsPlayingTrailer(false);
+        setIsEditingTrailer(false);
+        setTrailerInput(item.trailerUrl || '');
     }
-  }, [item?.id]);
+  }, [item?.id, item?.trailerUrl]);
 
   if (!isOpen || !item) return null;
 
@@ -86,6 +92,22 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
       onUpdateStatus(userId, { watchedEpisodes: newEps });
   };
 
+  // --- TRAILER HELPERS ---
+  const getYoutubeEmbedUrl = (url: string) => {
+      const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+      const match = url.match(regExp);
+      const id = (match && match[2].length === 11) ? match[2] : null;
+      return id ? `https://www.youtube.com/embed/${id}?autoplay=1` : null;
+  };
+
+  const handleSaveTrailer = () => {
+      onUpdateItem(item.id, { trailerUrl: trailerInput });
+      setIsEditingTrailer(false);
+      if (trailerInput && getYoutubeEmbedUrl(trailerInput)) {
+          setIsPlayingTrailer(true);
+      }
+  };
+
   // --- RATING HELPER ---
   const RatingButton = ({ value, icon, activeColor, label }: { value: number, icon: React.ReactNode, activeColor: string, label?: string }) => {
       const isSelected = item.rating === value;
@@ -112,34 +134,74 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
 
       <div className="relative bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-slate-700 transform transition-all flex flex-col max-h-[90vh]">
         
-        {/* Header Image */}
+        {/* Header Image or Trailer */}
         <div className="h-40 lg:h-52 w-full relative shrink-0 group bg-slate-900">
-           {imageState < 2 && currentSrc ? (
-              <img 
-                src={currentSrc} 
-                alt={item.title} 
-                className="w-full h-full object-cover opacity-60"
-                onError={handleImageError}
-              />
+           {isPlayingTrailer && item.trailerUrl ? (
+               <div className="w-full h-full bg-black relative">
+                   <iframe 
+                        className="w-full h-full"
+                        src={getYoutubeEmbedUrl(item.trailerUrl) || ''}
+                        title="Trailer"
+                        frameBorder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                   ></iframe>
+                   <button 
+                       onClick={() => setIsPlayingTrailer(false)}
+                       className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/80 rounded-full text-white transition-colors"
+                   >
+                       <X size={20} />
+                   </button>
+               </div>
            ) : (
-             <div className="w-full h-full flex items-center justify-center bg-slate-900 opacity-60">
-                 <div className="text-4xl opacity-50">
-                     {item.type === MediaType.MOVIE ? <Film size={64} /> : <Tv size={64} />}
+             <>
+               {imageState < 2 && currentSrc ? (
+                  <img 
+                    src={currentSrc} 
+                    alt={item.title} 
+                    className="w-full h-full object-cover opacity-60"
+                    onError={handleImageError}
+                  />
+               ) : (
+                 <div className="w-full h-full flex items-center justify-center bg-slate-900 opacity-60">
+                     <div className="text-4xl opacity-50">
+                         {item.type === MediaType.MOVIE ? <Film size={64} /> : <Tv size={64} />}
+                     </div>
                  </div>
-             </div>
+               )}
+              
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-800" />
+              <button 
+                onClick={onClose}
+                className="absolute top-3 right-3 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors z-10"
+              >
+                <X size={20} />
+              </button>
+
+              {/* Play Trailer Button on Header */}
+              <div className="absolute bottom-4 left-6 z-10 flex gap-2">
+                 {item.trailerUrl ? (
+                    <button 
+                        onClick={() => setIsPlayingTrailer(true)}
+                        className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur shadow-lg transition-transform hover:scale-105"
+                    >
+                        <Youtube size={16} /> Ver Trailer
+                    </button>
+                 ) : (
+                    <button 
+                        onClick={() => setIsEditingTrailer(true)}
+                        className="bg-slate-700/80 hover:bg-slate-600 text-slate-200 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur border border-slate-600 transition-colors"
+                    >
+                        <Youtube size={16} /> Añadir Trailer
+                    </button>
+                 )}
+              </div>
+             </>
            )}
-          
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-800" />
-          <button 
-            onClick={onClose}
-            className="absolute top-3 right-3 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors"
-          >
-            <X size={20} />
-          </button>
         </div>
 
         {/* Body - Split layout for LG screens */}
-        <div className="p-6 -mt-16 relative z-10 flex-1 overflow-y-auto custom-scrollbar">
+        <div className="p-6 -mt-2 relative z-10 flex-1 overflow-y-auto custom-scrollbar">
           
           {/* Main Grid Container */}
           <div className="lg:grid lg:grid-cols-12 lg:gap-8">
@@ -155,7 +217,32 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                             {item.year}
                         </span>
                     </div>
-                    <h2 className="text-3xl font-bold text-white mb-2 leading-tight">{item.title}</h2>
+                    <div className="flex items-start justify-between gap-2">
+                         <h2 className="text-3xl font-bold text-white mb-2 leading-tight">{item.title}</h2>
+                         {(item.trailerUrl || isEditingTrailer) && (
+                             <button onClick={() => setIsEditingTrailer(!isEditingTrailer)} className="text-slate-500 hover:text-white p-1" title="Editar URL Trailer">
+                                 <ExternalLink size={14} />
+                             </button>
+                         )}
+                    </div>
+                    
+                    {/* Trailer Input Edit Mode */}
+                    {isEditingTrailer && (
+                        <div className="mb-4 bg-slate-900 p-2 rounded-lg border border-slate-700 animate-in fade-in slide-in-from-top-2">
+                             <input 
+                                type="text" 
+                                value={trailerInput}
+                                onChange={(e) => setTrailerInput(e.target.value)}
+                                placeholder="Pega aquí link de Youtube..."
+                                className="w-full bg-slate-800 text-xs text-white p-2 rounded mb-2 border border-slate-600 focus:border-indigo-500 outline-none"
+                             />
+                             <div className="flex justify-end gap-2">
+                                 <button onClick={() => setIsEditingTrailer(false)} className="text-xs text-slate-400 hover:text-white px-2">Cancelar</button>
+                                 <button onClick={handleSaveTrailer} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold">Guardar</button>
+                             </div>
+                        </div>
+                    )}
+
                     <p className="text-slate-300 text-sm leading-relaxed">{item.description}</p>
                 </div>
 

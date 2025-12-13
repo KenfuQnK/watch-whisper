@@ -46,6 +46,7 @@ export interface MediaItem {
   platform?: Platform;
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
+  trailerUrl?: string; // YouTube URL
 
   // Metadata for series structure
   seasons?: SeasonData[]; 
@@ -65,4 +66,5 @@ export interface SearchResult {
   posterUrl: string;
   backupPosterUrl?: string;
   seasons?: SeasonData[]; 
+  trailerUrl?: string;
 }

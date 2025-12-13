@@ -155,7 +155,9 @@ const App: React.FC = () => {
     }
     setIsEnriching(true);
     try {
+        // This now also fetches the trailer via Gemini
         const enrichedResult = await getSeriesDetails(result);
+        
         const newItem: MediaItem = {
           id: Date.now().toString(),
           ...enrichedResult,
@@ -166,6 +168,7 @@ const App: React.FC = () => {
           platform: '', // Default empty
           releaseDate: '',
           rating: 0,
+          trailerUrl: enrichedResult.trailerUrl || '',
         };
         
         // Optimistic UI update not strictly needed as Realtime will trigger reload, 

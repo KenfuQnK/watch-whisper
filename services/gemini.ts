@@ -1,7 +1,38 @@
 import { SearchResult, MediaType, SeasonData } from "../types";
+import { GoogleGenAI } from "@google/genai";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
+
+// --- AI TRAILER SEARCH ---
+// Using Gemini to find the best YouTube link since we don't have a YouTube Data API Key
+const fetchTrailerWithGemini = async (title: string, year: string, type: MediaType): Promise<string> => {
+    try {
+        // NOTE: The process.env.API_KEY must be set in your Vercel project environment variables.
+        // For development, ensure you have a .env file or hardcode it temporarily (not recommended for commit).
+        if (!process.env.API_KEY) {
+            console.warn("No API_KEY found for Gemini trailer search");
+            return "";
+        }
+
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `Find the official YouTube trailer URL for the ${type} "${title}" released in ${year}. 
+        Prefer a trailer in Spanish (Español de España or Latino). 
+        Return ONLY the raw YouTube URL string. If not found, return an empty string. Do not include any text, markdown or explanation.`;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+
+        const url = response.text?.trim() || "";
+        return url.startsWith("http") ? url : "";
+    } catch (e) {
+        console.warn("Gemini trailer search failed", e);
+        return "";
+    }
+};
+
 
 // --- API CLIENTS ---
 
@@ -131,6 +162,9 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
 
 // --- ENRICHMENT FUNCTION ---
 export const getSeriesDetails = async (item: SearchResult): Promise<SearchResult> => {
+  // 1. Fetch Episodes (if series)
+  let enrichedItem = { ...item };
+  
   if (item.source === 'tvmaze' && item.type === MediaType.SERIES) {
     try {
       const url = `https://api.tvmaze.com/shows/${item.externalId}/episodes`;
@@ -148,12 +182,18 @@ export const getSeriesDetails = async (item: SearchResult): Promise<SearchResult
         episodeCount: seasonMap[parseInt(s)]
       }));
 
-      return { ...item, seasons };
+      enrichedItem.seasons = seasons;
     } catch (e) {
       console.error("Error fetching episodes", e);
-      return item;
     }
   }
+
+  // 2. Fetch Trailer (for all types) using Gemini
+  // We do this in the enrichment phase to avoid slowing down the main search list
+  const trailerUrl = await fetchTrailerWithGemini(item.title, item.year, item.type);
+  if (trailerUrl) {
+      enrichedItem.trailerUrl = trailerUrl;
+  }
   
-  return item;
+  return enrichedItem;
 };
