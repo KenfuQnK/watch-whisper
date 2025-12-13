@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -29,7 +29,6 @@ const App: React.FC = () => {
   // Modal States
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isEnriching, setIsEnriching] = useState(false);
   
   // File Input Ref for Import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -37,13 +36,15 @@ const App: React.FC = () => {
   // --- SUPABASE INITIALIZATION & REALTIME ---
   useEffect(() => {
     // 1. Initial Fetch
-    const loadData = async () => {
-      setIsLoading(true);
+    const loadData = async (isInitial = false) => {
+      if (isInitial) setIsLoading(true);
       const data = await fetchMediaItems();
       setItems(data);
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
     };
-    loadData();
+
+    // Load initially with spinner
+    loadData(true);
 
     // 2. Realtime Subscription
     const channel = supabase
@@ -52,10 +53,8 @@ const App: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'media_items' },
         (payload) => {
-          console.log('Realtime change received:', payload);
-          // Simple strategy: Reload data to ensure consistency. 
-          // Optimally we would merge payload.new into state, but reload is safer for MVP.
-          loadData(); 
+          // On change, simply reload data seamlessly without blocking UI
+          loadData(false);
         }
       )
       .subscribe();
@@ -153,33 +152,53 @@ const App: React.FC = () => {
         alert("¡Ya tienes esto en tu lista!");
         return;
     }
-    setIsEnriching(true);
+    
+    // 1. Prepare basic item data immediately (Optimistic UI)
+    // We only wait for series details (episodes) if needed, but we don't wait for AI trailer
+    let finalResult = result;
+    if (result.type === MediaType.SERIES) {
+        // Fetch episodes quickly (usually fast API)
+        try {
+             finalResult = await getSeriesDetails(result);
+        } catch(e) {
+            console.error("Error fetching episodes", e);
+        }
+    }
+
+    const newItem: MediaItem = {
+        id: Date.now().toString(),
+        ...finalResult, // Contains basic info + episodes
+        collectionId: CollectionType.WATCHLIST,
+        addedAt: Date.now(),
+        userStatus: {},
+        seasons: finalResult.seasons || [],
+        platform: [], 
+        releaseDate: '',
+        rating: 0,
+        trailerUrl: '', // Empty initially to be fast
+    };
+
+    // 2. Update UI Immediately
+    setItems(prev => [newItem, ...prev]);
+    
+    // 3. Save to DB Immediately
     try {
-        // This now also fetches the trailer via Gemini
-        const enrichedResult = await getSeriesDetails(result);
-        
-        const newItem: MediaItem = {
-          id: Date.now().toString(),
-          ...enrichedResult,
-          collectionId: CollectionType.WATCHLIST,
-          addedAt: Date.now(),
-          userStatus: {},
-          seasons: enrichedResult.seasons || [],
-          platform: [], // Changed from '' to []
-          releaseDate: '',
-          rating: 0,
-          trailerUrl: enrichedResult.trailerUrl || '',
-        };
-        
-        // Optimistic UI update not strictly needed as Realtime will trigger reload, 
-        // but feels faster.
-        setItems(prev => [newItem, ...prev]);
         await addMediaItem(newItem);
+        
+        // 4. Background Process: Fetch Trailer with AI
+        // This runs without blocking the UI
+        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
+            if (trailerUrl) {
+                // If found, update local state silently (optional, realtime will catch it anyway)
+                setItems(current => current.map(i => i.id === newItem.id ? { ...i, trailerUrl } : i));
+            }
+        });
+
     } catch (e) {
-        console.error("Error adding item", e);
+        console.error("Error adding item to DB", e);
+        // Rollback optimistic update if critical fail
+        setItems(prev => prev.filter(i => i.id !== newItem.id));
         alert("Error al guardar en la base de datos.");
-    } finally {
-        setIsEnriching(false);
     }
   };
 
@@ -195,50 +214,12 @@ const App: React.FC = () => {
       await updateMediaItem(itemId, changes);
   };
 
-  const handleUpdateStatus = async (userId: string, changes: Partial<WatchInfo>) => {
-    if (!selectedItem) return;
-
-    // Calculate new full object state for DB
-    const item = items.find(i => i.id === selectedItem.id);
-    if (!item) return;
-
-    const currentStatus = item.userStatus[userId] || { watched: false, watchedEpisodes: [] };
-    const newStatus: WatchInfo = { ...currentStatus, ...changes };
-
-    if (item.type === MediaType.MOVIE) {
-         if (changes.watched === true && !currentStatus.date) newStatus.date = Date.now();
-         if (changes.watched === false) newStatus.date = undefined;
-    }
-
-    const updatedUserStatus = { ...item.userStatus, [userId]: newStatus };
-    
-    // Determine Collection Logic (Legacy field, kept for consistency)
-    const isStarted = Object.values(updatedUserStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
-    const newCollectionId = isStarted ? CollectionType.WATCHED : CollectionType.WATCHLIST;
-
-    // Optimistic Update
-    const updatedItem = { 
-        ...item, 
-        userStatus: updatedUserStatus, 
-        collectionId: newCollectionId 
-    };
-    
-    setItems(prev => prev.map(i => i.id === item.id ? updatedItem : i));
-    setSelectedItem(updatedItem);
-
-    // DB Update
-    await updateMediaItem(item.id, { 
-        userStatus: updatedUserStatus, 
-        collectionId: newCollectionId 
-    });
-  };
-
   const handleDelete = async (itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
     await deleteMediaItem(itemId);
   };
 
-  // --- IMPORT/EXPORT (Updated to alert user) ---
+  // --- IMPORT/EXPORT ---
   const handleExport = () => {
     const dataStr = JSON.stringify(items, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -251,13 +232,11 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  // Import is tricky with DB ids. For now, we'll keep it simple: 
-  // It will try to insert items. If ID exists, it might fail or we should generate new IDs.
-  // For safety in this version, let's just console log or warn.
   const handleImportClick = () => {
       alert("La importación masiva directa está deshabilitada en modo Base de Datos para evitar conflictos. Contacta al admin.");
   };
 
+  // Only show full screen loader on INITIAL load
   if (isLoading) {
       return (
           <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
@@ -282,7 +261,6 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
               <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-1">
                  <button onClick={handleExport} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors" title="Exportar Backup"><Download size={18} /></button>
-                 {/* Import disabled for safety in DB mode */}
                  <button onClick={handleImportClick} className="p-2 text-slate-600 cursor-not-allowed rounded-md transition-colors" title="Importar (Deshabilitado)"><Upload size={18} /></button>
               </div>
               <div className="h-6 w-px bg-slate-700 mx-2 hidden md:block"></div>
@@ -363,13 +341,6 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Global Loading Feedback */}
-        {isEnriching && (
-            <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-indigo-600 px-4 py-2 rounded-full shadow-lg text-sm font-bold animate-pulse">
-                Obteniendo datos...
-            </div>
-        )}
-
         {/* Grid */}
         {filteredItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-slate-500">
@@ -407,8 +378,8 @@ const App: React.FC = () => {
         item={selectedItem}
         users={USERS}
         onClose={() => setSelectedItem(null)}
-        onUpdateStatus={handleUpdateStatus}
         onUpdateItem={handleUpdateItem}
+        onUpdateStatus={() => {}} // Deprecated but required by interface type in modal props currently
         onDelete={handleDelete}
       />
 

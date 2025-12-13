@@ -1,24 +1,24 @@
 import { SearchResult, MediaType, SeasonData } from "../types";
 import { GoogleGenAI } from "@google/genai";
+import { updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
-// --- AI TRAILER SEARCH ---
-// Using Gemini to find the best YouTube link since we don't have a YouTube Data API Key
-const fetchTrailerWithGemini = async (title: string, year: string, type: MediaType): Promise<string> => {
+// --- AI TRAILER SEARCH (Background Process) ---
+// Returns string, updates DB directly.
+export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
     try {
-        // NOTE: The process.env.API_KEY must be set in your Vercel project environment variables.
-        // For development, ensure you have a .env file or hardcode it temporarily (not recommended for commit).
         if (!process.env.API_KEY) {
             console.warn("No API_KEY found for Gemini trailer search");
             return "";
         }
 
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const prompt = `Find the official YouTube trailer URL for the ${type} "${title}" released in ${year}. 
-        Prefer a trailer in Spanish (Español de España or Latino). 
-        Return ONLY the raw YouTube URL string. If not found, return an empty string. Do not include any text, markdown or explanation.`;
+        // Improved prompt: Explicitly ask for ANY valid youtube link, less restrictive on language if hard to find.
+        const prompt = `Give me a Youtube link for the trailer of the ${type} "${title}" (${year}). 
+        Prefer Spanish, but English is acceptable if that's the only one official.
+        Respond ONLY with the URL. No text, no markdown.`;
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -26,7 +26,14 @@ const fetchTrailerWithGemini = async (title: string, year: string, type: MediaTy
         });
 
         const url = response.text?.trim() || "";
-        return url.startsWith("http") ? url : "";
+        
+        if (url.startsWith("http")) {
+            // Update DB asynchronously
+            console.log(`Trailer found for ${title}: ${url}`);
+            await updateMediaItem(itemId, { trailerUrl: url });
+            return url;
+        }
+        return "";
     } catch (e) {
         console.warn("Gemini trailer search failed", e);
         return "";
@@ -37,7 +44,6 @@ const fetchTrailerWithGemini = async (title: string, year: string, type: MediaTy
 // --- API CLIENTS ---
 
 // 1. CinemaMeta (Stremio Catalog) - VERY ROBUST, CORS Friendly
-// This is our "SI O SI" backup for movies.
 const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]> => {
     try {
         const url = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(query)}.json`;
@@ -64,7 +70,6 @@ const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]>
 }
 
 // 2. iTunes Search API (Best for Spanish data)
-// Changed proxy to corsproxy.io which is often more reliable
 const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => {
   try {
     const targetUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=movie&entity=movie&country=ES&lang=es_es&limit=15`;
@@ -122,8 +127,6 @@ const fetchSeriesFromTvMaze = async (query: string): Promise<SearchResult[]> => 
 // --- MAIN SEARCH FUNCTION ---
 
 export const searchMedia = async (query: string): Promise<SearchResult[]> => {
-  // Execute all searches in parallel
-  // Now using CinemaMeta as the heavy lifter for movies if iTunes fails
   const [itunesMovies, cinemetaMovies, series] = await Promise.all([
     fetchMoviesFromItunes(query),
     fetchMoviesFromCinemaMeta(query),
@@ -131,24 +134,19 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
   ]);
 
   const movieMap = new Map<string, SearchResult>();
-
-  // Strategy: Add CinemaMeta first (reliable), then overwrite with iTunes (Spanish) if available
   
   // 1. Add CinemaMeta movies
   cinemetaMovies.forEach(m => {
       movieMap.set(cleanTitle(m.title, m.year), m);
   });
 
-  // 2. Add/Overwrite with iTunes movies (better description/language usually)
+  // 2. Add/Overwrite with iTunes movies
   itunesMovies.forEach(m => {
       const key = cleanTitle(m.title, m.year);
-      // We prioritize iTunes because it respects the "es_es" language param
       movieMap.set(key, m);
   });
 
   const finalMovies = Array.from(movieMap.values());
-
-  // Interleave results: Series, Movie, Series, Movie...
   const combined: SearchResult[] = [];
   const maxLen = Math.max(finalMovies.length, series.length);
   
@@ -161,8 +159,8 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
 };
 
 // --- ENRICHMENT FUNCTION ---
+// ONLY fetches structural data (Episodes), NOT the trailer (which is slow)
 export const getSeriesDetails = async (item: SearchResult): Promise<SearchResult> => {
-  // 1. Fetch Episodes (if series)
   let enrichedItem = { ...item };
   
   if (item.source === 'tvmaze' && item.type === MediaType.SERIES) {
@@ -186,13 +184,6 @@ export const getSeriesDetails = async (item: SearchResult): Promise<SearchResult
     } catch (e) {
       console.error("Error fetching episodes", e);
     }
-  }
-
-  // 2. Fetch Trailer (for all types) using Gemini
-  // We do this in the enrichment phase to avoid slowing down the main search list
-  const trailerUrl = await fetchTrailerWithGemini(item.title, item.year, item.type);
-  if (trailerUrl) {
-      enrichedItem.trailerUrl = trailerUrl;
   }
   
   return enrichedItem;
