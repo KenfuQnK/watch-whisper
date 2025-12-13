@@ -1,15 +1,15 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, ListFilter, Film, Tv, Download, Upload, Filter, Calendar } from 'lucide-react';
+import { Plus, ListFilter, Film, Tv, Download, Upload, Filter, Calendar, Loader2 } from 'lucide-react';
 import { MediaItem, User, MediaType, CollectionType, SearchResult, WatchInfo } from './types';
 import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
 import { getSeriesDetails } from './services/gemini';
+import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
+import { supabase } from './lib/supabase';
 
 // --- CONFIG ---
-const STORAGE_KEY = 'duowatch_data_v2';
-
 const USERS: User[] = [
   { id: 'u1', name: 'Jesús', avatar: 'https://picsum.photos/seed/jesus/200', color: '#6366f1' }, // Indigo
   { id: 'u2', name: 'Julia', avatar: 'https://picsum.photos/seed/julia/200', color: '#ec4899' }, // Pink
@@ -19,18 +19,8 @@ const USERS: User[] = [
 type UiTab = 'pending' | 'inprogress' | 'finished';
 
 const App: React.FC = () => {
-  // Initialize state from LocalStorage or Default
-  const [items, setItems] = useState<MediaItem[]>(() => {
-    try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-            return JSON.parse(saved);
-        }
-    } catch (e) {
-        console.error("Error loading localStorage", e);
-    }
-    return []; // Start empty if nothing saved
-  });
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<UiTab>('pending');
   const [activeFilter, setActiveFilter] = useState<'all' | MediaType>('all');
@@ -44,9 +34,43 @@ const App: React.FC = () => {
   // File Input Ref for Import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Persistence Effect
+  // --- SUPABASE INITIALIZATION & REALTIME ---
   useEffect(() => {
-     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    // 1. Initial Fetch
+    const loadData = async () => {
+      setIsLoading(true);
+      const data = await fetchMediaItems();
+      setItems(data);
+      setIsLoading(false);
+    };
+    loadData();
+
+    // 2. Realtime Subscription
+    const channel = supabase
+      .channel('media_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'media_items' },
+        (payload) => {
+          console.log('Realtime change received:', payload);
+          // Simple strategy: Reload data to ensure consistency. 
+          // Optimally we would merge payload.new into state, but reload is safer for MVP.
+          loadData(); 
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Update selectedItem when items change (for realtime modal updates)
+  useEffect(() => {
+    if (selectedItem) {
+      const updated = items.find(i => i.id === selectedItem.id);
+      if (updated) setSelectedItem(updated);
+    }
   }, [items]);
 
   // --- HELPERS FOR STATUS ---
@@ -67,19 +91,10 @@ const App: React.FC = () => {
               // Series
               const epCount = status.watchedEpisodes?.length || 0;
               if (epCount > 0) startedCount++;
-              // Simplified "finished" logic for series (approximate)
-              // If we have seasons data, we could check strictly, but for now:
-              // If they watched > 0 eps, they started.
-              // We consider "finished" if manually marked or if logic implies (hard for series without total eps)
-              // For the sake of "A Medias" tab, we'll check if everyone has started/interacted.
-              // To enable "Terminados" tab for series properly without checking every episode:
-              // Let's assume for series: If they watched something, it's In Progress. 
-              // *Ideally* users should mark "Whole series watched", but currently we track episodes.
-              // Let's rely on: If ALL users have watched AT LEAST 1 episode -> Potentially finished/in progress.
-              // Wait, the prompt says "A medias cuando solo uno de los dos la haya visto".
-              // So:
-              // Finished = All users have watched (Movie) or have > 0 eps (Series).
-              // A Medias = Only 1 user has watched/started.
+              
+              // For Series "Finished" logic:
+              // If we wanted to be strict, we'd compare against total episodes.
+              // For "A Medias" logic:
               if (epCount > 0) finishedCount++; 
           }
       });
@@ -97,12 +112,11 @@ const App: React.FC = () => {
             // No one has started it
             if (startedCount > 0) return false;
         } else if (activeTab === 'inprogress') {
-            // "A medias": At least one started, but NOT everyone has "finished" (or participated)
-            // Strict interpretation of "Solo uno de los dos la haya visto":
+            // "A medias": At least one started, but NOT everyone has "finished"
             if (startedCount === 0) return false; // Pending
             if (finishedCount === totalUsers) return false; // Everyone saw it
         } else if (activeTab === 'finished') {
-             // Everyone has seen it (or started the series)
+             // Everyone has seen it
              if (finishedCount < totalUsers) return false;
         }
 
@@ -115,9 +129,6 @@ const App: React.FC = () => {
             const s = item.userStatus[userFilter];
             const hasActivity = s && (s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
             
-            // In Pending tab, user filter might mean "Assigned to me"? 
-            // For simplicity: In "Pending", we ignore user filter (shared list).
-            // In "In Progress" / "Finished", we allow filtering.
             if (activeTab !== 'pending' && !hasActivity) return false;
         }
 
@@ -143,67 +154,87 @@ const App: React.FC = () => {
         return;
     }
     setIsEnriching(true);
-    const enrichedResult = await getSeriesDetails(result);
-    const newItem: MediaItem = {
-      id: Date.now().toString(),
-      ...enrichedResult,
-      collectionId: CollectionType.WATCHLIST,
-      addedAt: Date.now(),
-      userStatus: {},
-      seasons: enrichedResult.seasons || [],
-      platform: '', // Default empty
-      releaseDate: '' 
-    };
-    setItems(prev => [newItem, ...prev]);
-    setIsEnriching(false);
+    try {
+        const enrichedResult = await getSeriesDetails(result);
+        const newItem: MediaItem = {
+          id: Date.now().toString(),
+          ...enrichedResult,
+          collectionId: CollectionType.WATCHLIST,
+          addedAt: Date.now(),
+          userStatus: {},
+          seasons: enrichedResult.seasons || [],
+          platform: '', // Default empty
+          releaseDate: '' 
+        };
+        
+        // Optimistic UI update not strictly needed as Realtime will trigger reload, 
+        // but feels faster.
+        setItems(prev => [newItem, ...prev]);
+        await addMediaItem(newItem);
+    } catch (e) {
+        console.error("Error adding item", e);
+        alert("Error al guardar en la base de datos.");
+    } finally {
+        setIsEnriching(false);
+    }
   };
 
-  // New Generic Update Handler
-  const handleUpdateItem = (itemId: string, changes: Partial<MediaItem>) => {
+  // Generic Update Handler
+  const handleUpdateItem = async (itemId: string, changes: Partial<MediaItem>) => {
+      // Optimistic Update
       setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
       if (selectedItem && selectedItem.id === itemId) {
           setSelectedItem(prev => prev ? { ...prev, ...changes } : null);
       }
+      
+      // DB Update
+      await updateMediaItem(itemId, changes);
   };
 
-  const handleUpdateStatus = (userId: string, changes: Partial<WatchInfo>) => {
+  const handleUpdateStatus = async (userId: string, changes: Partial<WatchInfo>) => {
     if (!selectedItem) return;
 
-    setItems(prev => prev.map(item => {
-      if (item.id === selectedItem.id) {
-        const currentStatus = item.userStatus[userId] || { watched: false, watchedEpisodes: [] };
-        const newStatus: WatchInfo = { ...currentStatus, ...changes };
+    // Calculate new full object state for DB
+    const item = items.find(i => i.id === selectedItem.id);
+    if (!item) return;
 
-        if (item.type === MediaType.MOVIE) {
-             if (changes.watched === true && !currentStatus.date) newStatus.date = Date.now();
-             if (changes.watched === false) newStatus.date = undefined;
-        }
+    const currentStatus = item.userStatus[userId] || { watched: false, watchedEpisodes: [] };
+    const newStatus: WatchInfo = { ...currentStatus, ...changes };
 
-        const updatedUserStatus = { ...item.userStatus, [userId]: newStatus };
-        
-        // CollectionType field is less relevant now with UI Tabs, but we keep it for legacy/logic
-        // Determine loosely if it's watched
-        const isStarted = Object.values(updatedUserStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
-        const newCollectionId = isStarted ? CollectionType.WATCHED : CollectionType.WATCHLIST;
+    if (item.type === MediaType.MOVIE) {
+         if (changes.watched === true && !currentStatus.date) newStatus.date = Date.now();
+         if (changes.watched === false) newStatus.date = undefined;
+    }
 
-        const updatedItem = { 
-            ...item, 
-            userStatus: updatedUserStatus, 
-            collectionId: newCollectionId 
-        };
-        
-        setSelectedItem(updatedItem);
-        return updatedItem;
-      }
-      return item;
-    }));
+    const updatedUserStatus = { ...item.userStatus, [userId]: newStatus };
+    
+    // Determine Collection Logic (Legacy field, kept for consistency)
+    const isStarted = Object.values(updatedUserStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
+    const newCollectionId = isStarted ? CollectionType.WATCHED : CollectionType.WATCHLIST;
+
+    // Optimistic Update
+    const updatedItem = { 
+        ...item, 
+        userStatus: updatedUserStatus, 
+        collectionId: newCollectionId 
+    };
+    
+    setItems(prev => prev.map(i => i.id === item.id ? updatedItem : i));
+    setSelectedItem(updatedItem);
+
+    // DB Update
+    await updateMediaItem(item.id, { 
+        userStatus: updatedUserStatus, 
+        collectionId: newCollectionId 
+    });
   };
 
-  const handleDelete = (itemId: string) => {
+  const handleDelete = async (itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
+    await deleteMediaItem(itemId);
   };
 
-  // --- BACKUP FUNCTIONS ---
+  // --- IMPORT/EXPORT (Updated to alert user) ---
   const handleExport = () => {
     const dataStr = JSON.stringify(items, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -216,31 +247,20 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  const handleImportClick = () => fileInputRef.current?.click();
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = event.target?.result as string;
-        const parsed = JSON.parse(json);
-        if (Array.isArray(parsed)) {
-          if (confirm(`Se van a importar ${parsed.length} elementos. Esto sobrescribirá los datos actuales. ¿Estás seguro?`)) {
-            setItems(parsed);
-          }
-        } else {
-          alert("El archivo no tiene el formato correcto.");
-        }
-      } catch (err) {
-        alert("Error al leer el archivo JSON.");
-        console.error(err);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+  // Import is tricky with DB ids. For now, we'll keep it simple: 
+  // It will try to insert items. If ID exists, it might fail or we should generate new IDs.
+  // For safety in this version, let's just console log or warn.
+  const handleImportClick = () => {
+      alert("La importación masiva directa está deshabilitada en modo Base de Datos para evitar conflictos. Contacta al admin.");
   };
+
+  if (isLoading) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+              <Loader2 className="animate-spin mr-2" /> Cargando DuoWatch...
+          </div>
+      )
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 pb-20">
@@ -252,14 +272,14 @@ const App: React.FC = () => {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-pink-500 flex items-center justify-center font-bold text-white">
               D
             </div>
-            <h1 className="text-xl font-bold tracking-tight">DuoWatch</h1>
+            <h1 className="text-xl font-bold tracking-tight">DuoWatch <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</span></h1>
           </div>
 
           <div className="flex items-center gap-4">
               <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-1">
-                 <button onClick={handleExport} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors" title="Exportar"><Download size={18} /></button>
-                 <button onClick={handleImportClick} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors" title="Importar"><Upload size={18} /></button>
-                 <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
+                 <button onClick={handleExport} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors" title="Exportar Backup"><Download size={18} /></button>
+                 {/* Import disabled for safety in DB mode */}
+                 <button onClick={handleImportClick} className="p-2 text-slate-600 cursor-not-allowed rounded-md transition-colors" title="Importar (Deshabilitado)"><Upload size={18} /></button>
               </div>
               <div className="h-6 w-px bg-slate-700 mx-2 hidden md:block"></div>
               <div className="flex gap-3">
