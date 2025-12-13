@@ -8,7 +8,7 @@ export enum CollectionType {
   WATCHED = 'watched',
 }
 
-export type Platform = 'Netflix' | 'HBO' | 'Disney+' | 'AppleTV' | 'Prime' | 'Stremio' | 'Torrent' | 'Online' | '';
+export type Platform = 'Netflix' | 'HBO' | 'Disney+' | 'AppleTV' | 'Prime' | 'Stremio' | 'Torrent' | 'Online' | 'Cine' | '';
 
 export interface User {
   id: string;
@@ -45,6 +45,7 @@ export interface MediaItem {
   // New Fields
   platform?: Platform;
   releaseDate?: string; // YYYY-MM-DD
+  rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
 
   // Metadata for series structure
   seasons?: SeasonData[]; 

@@ -164,7 +164,8 @@ const App: React.FC = () => {
           userStatus: {},
           seasons: enrichedResult.seasons || [],
           platform: '', // Default empty
-          releaseDate: '' 
+          releaseDate: '',
+          rating: 0,
         };
         
         // Optimistic UI update not strictly needed as Realtime will trigger reload, 
@@ -241,7 +242,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `duowatch_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `watch_whisper_backup_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -257,7 +258,7 @@ const App: React.FC = () => {
   if (isLoading) {
       return (
           <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
-              <Loader2 className="animate-spin mr-2" /> Cargando DuoWatch...
+              <Loader2 className="animate-spin mr-2" /> Cargando Watch Whisper...
           </div>
       )
   }
@@ -270,9 +271,9 @@ const App: React.FC = () => {
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-pink-500 flex items-center justify-center font-bold text-white">
-              D
+              W
             </div>
-            <h1 className="text-xl font-bold tracking-tight">DuoWatch <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</span></h1>
+            <h1 className="text-xl font-bold tracking-tight">Watch Whisper <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</span></h1>
           </div>
 
           <div className="flex items-center gap-4">

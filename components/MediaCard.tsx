@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MediaItem, User, MediaType, Platform } from '../types';
 import Avatar from './Avatar';
-import { Film, Tv, Calendar } from 'lucide-react';
+import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
 
 interface MediaCardProps {
   item: MediaItem;
@@ -19,6 +19,7 @@ const getPlatformColor = (p?: Platform) => {
         case 'Stremio': return 'bg-indigo-500 text-white';
         case 'Torrent': return 'bg-green-600 text-white';
         case 'Online': return 'bg-orange-500 text-white';
+        case 'Cine': return 'bg-yellow-600 text-white';
         default: return 'bg-slate-700 text-slate-300 hidden';
     }
 }
@@ -48,6 +49,17 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
 
   let currentSrc = item.posterUrl;
   if (imageState === 1 && item.backupPosterUrl) currentSrc = item.backupPosterUrl;
+
+  const renderRating = () => {
+      if (!item.rating) return null;
+      switch(item.rating) {
+          case 1: return <div className="bg-red-500 text-white p-1 rounded-full"><ThumbsDown size={12} /></div>;
+          case 2: return <div className="bg-blue-500 text-white p-1 rounded-full"><ThumbsUp size={12} /></div>;
+          case 3: return <div className="bg-pink-500 text-white p-1 rounded-full flex"><ThumbsUp size={10} className="-mr-1" /><ThumbsUp size={10} /></div>;
+          case 4: return <div className="bg-yellow-500 text-black p-1 rounded-full"><Star size={12} fill="currentColor" /></div>;
+          default: return null;
+      }
+  };
 
   return (
     <div 
@@ -96,11 +108,14 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         )}
       </div>
 
-      {/* Watched Status (Avatars) */}
-      <div className="absolute top-3 right-3 flex -space-x-2 z-10">
-        {usersWithActivity.map(user => (
-          <Avatar key={user.id} user={user} size="sm" className="border-slate-900 ring-0" />
-        ))}
+      {/* Watched Status (Avatars) & Rating */}
+      <div className="absolute top-3 right-3 flex flex-col items-end gap-2 z-10">
+        <div className="flex -space-x-2">
+            {usersWithActivity.map(user => (
+            <Avatar key={user.id} user={user} size="sm" className="border-slate-900 ring-0" />
+            ))}
+        </div>
+        {renderRating()}
       </div>
 
       {/* Content */}
