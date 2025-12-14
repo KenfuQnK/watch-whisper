@@ -41,6 +41,11 @@ export interface MediaItem {
   year?: string;
   addedAt: number;
   collectionId: CollectionType;
+  source: {
+    title: 'api' | 'ai';
+    description: 'api' | 'ai';
+    trailer: 'api' | 'ai';
+  };
   
   // New Fields
   platform?: string[]; // Changed from Platform (single string) to string array
