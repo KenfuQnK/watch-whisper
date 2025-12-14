@@ -11,8 +11,8 @@ import { supabase } from './lib/supabase';
 
 // --- CONFIG ---
 const USERS: User[] = [
-  { id: 'u1', name: 'Jesús', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJesus.PNG', color: '#6366f1' }, // Indigo
-  { id: 'u2', name: 'Julia', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJulia.PNG', color: '#ec4899' }, // Pink
+  { id: 'u1', name: 'Jesús', avatar: 'https://picsum.photos/seed/jesus/200', color: '#6366f1' }, // Indigo
+  { id: 'u2', name: 'Julia', avatar: 'https://picsum.photos/seed/julia/200', color: '#ec4899' }, // Pink
 ];
 
 // Define UI Tabs (Computed, not stored directly as CollectionType)
@@ -178,19 +178,23 @@ const App: React.FC = () => {
         trailerUrl: '', // Empty initially to be fast
     };
 
-    // 2. Update UI Immediately
+    // 2. Update UI Immediately (Add to list)
     setItems(prev => [newItem, ...prev]);
     
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
         
-        // 4. Background Process: Fetch Trailer with AI
-        // This runs without blocking the UI
+        // 4. Background Process: Fetch Trailer with AI (using Google Search now)
         fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
             if (trailerUrl) {
-                // If found, update local state silently (optional, realtime will catch it anyway)
-                setItems(current => current.map(i => i.id === newItem.id ? { ...i, trailerUrl } : i));
+                // FORCE UPDATE LOCAL STATE when promise resolves
+                // This ensures the user sees the "Play Trailer" button appear on the card instantly
+                setItems(currentItems => 
+                    currentItems.map(item => 
+                        item.id === newItem.id ? { ...item, trailerUrl } : item
+                    )
+                );
             }
         });
 

@@ -5,8 +5,10 @@ import { updateMediaItem } from "./db";
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
+// Regex to validate real YouTube URLs (prevents AI hallucinations)
+const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+
 // --- AI TRAILER SEARCH (Background Process) ---
-// Returns string, updates DB directly.
 export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
     try {
         if (!process.env.API_KEY) {
@@ -15,25 +17,51 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
         }
 
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        // Improved prompt: Explicitly ask for ANY valid youtube link, less restrictive on language if hard to find.
-        const prompt = `Give me a Youtube link for the trailer of the ${type} "${title}" (${year}). 
-        Prefer Spanish, but English is acceptable if that's the only one official.
-        Respond ONLY with the URL. No text, no markdown.`;
+        
+        const prompt = `Find the official YouTube trailer URL for the ${type} "${title}" released in ${year}. 
+        Return ONLY the raw YouTube URL. Do not include words like "Here is the link". Just the URL.`;
 
+        // We use the Google Search tool to ensure the link actually exists (Grounding)
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
+            config: {
+                tools: [{ googleSearch: {} }] 
+            }
         });
 
-        const url = response.text?.trim() || "";
+        const text = response.text || "";
         
-        if (url.startsWith("http")) {
-            // Update DB asynchronously
-            console.log(`Trailer found for ${title}: ${url}`);
-            await updateMediaItem(itemId, { trailerUrl: url });
-            return url;
+        // 1. Extract potential URL from text
+        const urlMatch = text.match(/https?:\/\/[^\s]+/);
+        const candidateUrl = urlMatch ? urlMatch[0] : "";
+
+        // 2. Validate it is a real YouTube link
+        const isValid = YOUTUBE_REGEX.test(candidateUrl);
+
+        if (isValid) {
+            console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
+            // Save to DB
+            await updateMediaItem(itemId, { trailerUrl: candidateUrl });
+            return candidateUrl;
+        } else {
+            console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
+            
+            // Fallback: Check grounding chunks if text failed (sometimes links are in metadata)
+            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            if (chunks) {
+                for (const chunk of chunks) {
+                    if (chunk.web?.uri && YOUTUBE_REGEX.test(chunk.web.uri)) {
+                         const validUri = chunk.web.uri;
+                         console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
+                         await updateMediaItem(itemId, { trailerUrl: validUri });
+                         return validUri;
+                    }
+                }
+            }
+            return "";
         }
-        return "";
+
     } catch (e) {
         console.warn("Gemini trailer search failed", e);
         return "";
@@ -64,7 +92,7 @@ const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]>
             backupPosterUrl: item.poster ? item.poster.replace('large', 'medium') : '',
         }));
     } catch (e) {
-        console.warn("CinemaMeta API failed", e);
+        // Silently fail for individual providers to avoid console spam
         return [];
     }
 }
@@ -73,10 +101,14 @@ const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]>
 const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => {
   try {
     const targetUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=movie&entity=movie&country=ES&lang=es_es&limit=15`;
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+    
+    // Changed Proxy: corsproxy.io (403 error) -> api.allorigins.win (More permissive)
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
     
     const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error('Proxy returned error');
+    
+    // If proxy fails, just return empty array without throwing loud error
+    if (!res.ok) return [];
     
     const data = await res.json();
     
@@ -92,7 +124,7 @@ const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => 
       backupPosterUrl: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x600bb') : '',
     }));
   } catch (e) {
-    console.warn("iTunes API failed (likely CORS or network), skipping...", e);
+    // Silently fail to keep console clean
     return [];
   }
 };
@@ -119,7 +151,6 @@ const fetchSeriesFromTvMaze = async (query: string): Promise<SearchResult[]> => 
       };
     });
   } catch (e) {
-    console.error("TVMaze API error", e);
     return [];
   }
 };
