@@ -179,11 +179,10 @@ const App: React.FC = () => {
         addedAt: Date.now(),
         userStatus: {},
         seasons: finalResult.seasons || [],
-        platform: [],
+        platform: [], 
         releaseDate: '',
         rating: 0,
         trailerUrl: '', // Empty initially to be fast
-        trailerStatus: 'searching',
     };
 
     // 2. Update UI Immediately (Add to list)
@@ -192,18 +191,18 @@ const App: React.FC = () => {
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
-
+        
         // 4. Background Process: Fetch Trailer with AI (using Google Search now)
         fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
-            // FORCE UPDATE LOCAL STATE when promise resolves
-            // This ensures the user sees the "Play Trailer" button appear on the card instantly
-            setItems(currentItems =>
-                currentItems.map(item =>
-                    item.id === newItem.id
-                        ? { ...item, trailerUrl, trailerStatus: trailerUrl ? 'found' : 'failed' }
-                        : item
-                )
-            );
+            if (trailerUrl) {
+                // FORCE UPDATE LOCAL STATE when promise resolves
+                // This ensures the user sees the "Play Trailer" button appear on the card instantly
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, trailerUrl } : item
+                    )
+                );
+            }
         });
 
         // 5. Background Process: Translate metadata to Spanish if needed
