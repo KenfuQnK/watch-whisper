@@ -47,7 +47,7 @@ export interface MediaItem {
   // New Fields
   platform?: string[]; // Changed from Platform (single string) to string array
   releaseDate?: string; // YYYY-MM-DD
-  rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
+  rating?: number; // 9 = Discarded. 1-4 = Rated. undefined/0 = Unrated.
   trailerUrl?: string; // YouTube URL
   
   // AI Metadata

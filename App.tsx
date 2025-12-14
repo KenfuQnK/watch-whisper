@@ -116,12 +116,12 @@ const App: React.FC = () => {
   const filteredItems = useMemo(() => {
     return items.filter(item => {
         
-        // 1. Discarded Logic (Overrides everything else)
-        if (item.rating === 0) {
+        // 1. Discarded Logic (Overrides everything else) -> NOW IS 9
+        if (item.rating === 9) {
             return activeTab === 'discarded';
         }
 
-        // If we are in the discarded tab, only show rating 0 items
+        // If we are in the discarded tab, only show rating 9 items
         if (activeTab === 'discarded') return false;
 
         const { startedCount, finishedCount } = getStatusCounts(item);
@@ -163,7 +163,7 @@ const App: React.FC = () => {
   const counts = useMemo(() => {
       let pending = 0, inprogress = 0, finished = 0, discarded = 0;
       items.forEach(item => {
-          if (item.rating === 0) {
+          if (item.rating === 9) {
               discarded++;
               return;
           }
@@ -201,7 +201,7 @@ const App: React.FC = () => {
         seasons: finalResult.seasons || [],
         platform: [], 
         releaseDate: '',
-        rating: undefined, // undefined implies unrated/pending. 0 implies discarded.
+        rating: undefined, // undefined implies unrated/pending. 9 implies discarded.
         trailerUrl: '', 
         isEnriched: false // Flag to trigger AI background process
     };
@@ -216,7 +216,7 @@ const App: React.FC = () => {
         // Fire and forget - The component will update via Supabase subscription 
         // when this async function finishes updating the DB row.
         enrichMediaContent(newItem).then(() => {
-            console.log("Background enrichment completed for:", newItem.title);
+            console.log("Background enrichment kicked off for:", newItem.title);
         });
 
     } catch (e) {

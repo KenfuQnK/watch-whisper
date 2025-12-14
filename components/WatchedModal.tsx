@@ -67,8 +67,20 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
   useEffect(() => {
       if (propItem && localItem && propItem.id === localItem.id) {
           // If the backend has enriched the item, update our local view immediately
+          // IMPORTANT: Check individual fields to update dynamically without overwriting user edits in progress
+          // Actually, since enrich is a background process that happens ONCE, we can just sync if 'isEnriched' changes
           if (propItem.isEnriched && !localItem.isEnriched) {
-              setLocalItem(prev => prev ? ({ ...prev, ...propItem }) : null);
+             setLocalItem(prev => {
+                 if (!prev) return null;
+                 return {
+                     ...prev,
+                     isEnriched: true,
+                     title: propItem.title !== prev.title ? propItem.title : prev.title,
+                     originalTitle: propItem.originalTitle,
+                     description: propItem.description !== prev.description ? propItem.description : prev.description,
+                     trailerUrl: propItem.trailerUrl !== prev.trailerUrl ? propItem.trailerUrl : prev.trailerUrl
+                 }
+             });
           }
       }
   }, [propItem]);
@@ -215,6 +227,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
   };
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop closes and saves */}
       <div 
@@ -357,7 +370,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 <div className="bg-slate-900/40 p-3 rounded-xl border border-slate-700/50">
                     <label className="text-[10px] text-slate-400 uppercase font-bold mb-2 block">Valoración</label>
                     <div className="flex gap-2">
-                        <RatingButton value={0} activeColor="text-red-600" icon={<Ban size={20} />} label="Descartado" />
+                        <RatingButton value={9} activeColor="text-red-600" icon={<Ban size={20} />} label="Descartado" />
                         <RatingButton value={1} activeColor="text-red-500" icon={<ThumbsDown size={20} />} label="Mala" />
                         <RatingButton value={2} activeColor="text-blue-400" icon={<ThumbsUp size={20} />} label="Buena" />
                         <RatingButton 
@@ -383,7 +396,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                             <MonitorPlay size={10} /> Plataformas
                         </label>
                         <button 
-                            onClick={() => setShowPlatformSelector(!showPlatformSelector)}
+                            onClick={() => setShowPlatformSelector(true)}
                             className="w-full bg-slate-800 border border-slate-700 text-xs text-left text-white rounded-lg py-2 px-3 flex justify-between items-center hover:bg-slate-700 transition-colors"
                         >
                             <span className="truncate">
@@ -393,32 +406,6 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                             </span>
                             <ChevronDown size={12} className="text-slate-400" />
                         </button>
-                        
-                        {/* MOSAIC POPUP FOR PLATFORMS */}
-                        {showPlatformSelector && (
-                            <div className="absolute top-full left-0 mt-2 z-50 w-64 md:w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-3 animate-in fade-in zoom-in-95">
-                                <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700">
-                                    <span className="text-xs font-bold text-slate-400">Elige plataformas:</span>
-                                    <button onClick={() => setShowPlatformSelector(false)} className="text-slate-400 hover:text-white"><X size={14}/></button>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {PLATFORM_OPTIONS.map(opt => {
-                                        const isSelected = localItem.platform?.includes(opt.name);
-                                        return (
-                                            <button 
-                                                key={opt.name}
-                                                onClick={() => togglePlatform(opt.name)}
-                                                className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all aspect-square border-2 ${isSelected ? 'border-white/50 ' + opt.color + ' text-white' : 'border-transparent bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
-                                            >
-                                                <div className="mb-1">{opt.icon}</div>
-                                                <span className="text-[10px] font-bold leading-none">{opt.name}</span>
-                                                {isSelected && <div className="absolute top-1 right-1 bg-white text-black rounded-full p-0.5"><Check size={8} /></div>}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        )}
                     </div>
 
                     <div>
@@ -623,6 +610,41 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
         </div>
       </div>
     </div>
+    
+    {/* CENTERED PLATFORM MODAL OVERLAY */}
+    {showPlatformSelector && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+             <div className="w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 animate-in zoom-in-95">
+                <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-700">
+                    <span className="text-sm font-bold text-white">Elige plataformas:</span>
+                    <button onClick={() => setShowPlatformSelector(false)} className="text-slate-400 hover:text-white"><X size={16}/></button>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                    {PLATFORM_OPTIONS.map(opt => {
+                        const isSelected = localItem.platform?.includes(opt.name);
+                        return (
+                            <button 
+                                key={opt.name}
+                                onClick={() => togglePlatform(opt.name)}
+                                className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all aspect-square border-2 ${isSelected ? 'border-white/50 ' + opt.color + ' text-white shadow-lg scale-105' : 'border-transparent bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                            >
+                                <div className="mb-2 transform scale-125">{opt.icon}</div>
+                                <span className="text-[10px] font-bold leading-none">{opt.name}</span>
+                                {isSelected && <div className="absolute top-1 right-1 bg-white text-black rounded-full p-0.5"><Check size={8} /></div>}
+                            </button>
+                        )
+                    })}
+                </div>
+                <button 
+                    onClick={() => setShowPlatformSelector(false)} 
+                    className="w-full mt-4 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg font-bold text-xs"
+                >
+                    Listo
+                </button>
+             </div>
+        </div>
+    )}
+    </>
   );
 };
 

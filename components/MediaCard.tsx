@@ -51,10 +51,10 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
   if (imageState === 1 && item.backupPosterUrl) currentSrc = item.backupPosterUrl;
 
   const renderRating = () => {
-      if (item.rating === undefined) return null; // 0 is a valid rating now
+      if (item.rating === undefined || item.rating === 0) return null; // 0/undefined = Unrated
       
       switch(item.rating) {
-          case 0: return <div className="bg-red-700 text-white p-1 rounded-full"><Ban size={12} /></div>;
+          case 9: return <div className="bg-red-700 text-white p-1 rounded-full"><Ban size={12} /></div>; // 9 = Discarded
           case 1: return <div className="bg-red-500 text-white p-1 rounded-full"><ThumbsDown size={12} /></div>;
           case 2: return <div className="bg-blue-500 text-white p-1 rounded-full"><ThumbsUp size={12} /></div>;
           case 3: return <div className="bg-pink-500 text-white p-1 rounded-full flex"><ThumbsUp size={10} className="-mr-1" /><ThumbsUp size={10} /></div>;
@@ -66,8 +66,8 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
   // Safe Platform Access (ensure array)
   const platforms = Array.isArray(item.platform) ? item.platform : (item.platform ? [item.platform] : []);
 
-  // Grayscale for discarded
-  const isDiscarded = item.rating === 0;
+  // Grayscale for discarded (Rating 9)
+  const isDiscarded = item.rating === 9;
 
   return (
     <div 
