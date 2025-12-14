@@ -5,46 +5,39 @@ import { updateMediaItem } from "./db";
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
-// Regex to validate real YouTube URLs
-const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+// Regex to validate real YouTube URLs (standard watch URLs and short URLs)
+const YOUTUBE_REGEX = /(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
 // --- AI ENRICHMENT PIPELINE (Background Process) ---
 // This acts "After" the API data is saved. It polishes the data.
 export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
-    if (item.isEnriched) return; // Cache check: Don't process twice
+    if (item.isEnriched) return; 
+
+    console.log(`🤖 [AI] START: Iniciando enriquecimiento para "${item.title}"...`);
 
     try {
         if (!process.env.API_KEY) {
-            console.warn("No API_KEY found for Gemini enrichment");
+            console.warn("❌ [AI] No API_KEY found");
             return;
         }
 
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
-        // NOTE: We cannot use 'responseMimeType: application/json' together with 'tools: googleSearch'
-        // in the current API version. We must ask for JSON in the prompt text.
-
+        // Simplified prompt focusing on Search first, JSON second.
         const prompt = `
-        You are a cinema metadata expert for a Spanish audience.
-        Target Item: ${item.type} "${item.title}" (${item.year}).
-        
-        GOAL: Validate metadata and find a REAL, WORKING YouTube trailer.
-        
-        INSTRUCTIONS:
-        1. SPANISH INFO: Translate Title and Description to Spanish (Spain).
-        2. TRAILER SEARCH (CRITICAL): 
-           - You MUST use the 'googleSearch' tool to search for: "trailer oficial español ${item.title} ${item.year} youtube".
-           - Look for results from "Netflix", "HBO", "Disney", "Universal", "Warner", or official movie channels.
-           - EXTRACT the EXACT URL from the search result. 
-           - DO NOT GUESS OR INVENT A URL. If the search does not provide a direct YouTube link, return an empty string for the trailer.
-           - Prefer Spanish audio/subs. If not found, English is acceptable.
+        TASK: Find metadata and a YouTube trailer for the ${item.type}: "${item.title}" (${item.year}).
 
-        OUTPUT FORMAT:
-        Return ONLY a raw JSON string (no markdown).
+        STEPS:
+        1. USE THE 'googleSearch' TOOL to search for: "trailer español ${item.title} ${item.year} youtube".
+        2. From the search results, COPY the most accurate YouTube URL (watch?v=...).
+        3. Translate Title and Description to Spanish (Spain).
+        4. Output the result in JSON format.
+
+        JSON STRUCTURE:
         {
-            "spanishTitle": "string",
-            "spanishDescription": "string",
-            "trailerUrl": "string (MUST be a valid https://www.youtube.com/watch?v=... found in search, or empty string)"
+            "spanishTitle": "...",
+            "spanishDescription": "...",
+            "trailerUrl": "..."
         }
         `;
 
@@ -52,54 +45,82 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
-                tools: [{ googleSearch: {} }], // Use Grounding for Trailer
+                tools: [{ googleSearch: {} }], 
             }
         });
 
         let resultText = response.text;
-        if (!resultText) return;
-
-        // Cleanup: Sometimes the model adds markdown code blocks despite instructions
-        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-        let result;
-        try {
-            result = JSON.parse(resultText);
-        } catch (e) {
-            console.error("Failed to parse AI JSON response", resultText);
+        
+        if (!resultText) {
+            console.warn(`⚠️ [AI] Respuesta vacía para ${item.title}`);
             return;
         }
 
-        // Validation & Merge Logic
-        const updates: Partial<MediaItem> = { isEnriched: true };
-        
-        // Only update title if it's significantly different and exists
-        if (result.spanishTitle && result.spanishTitle !== item.title) {
-            updates.title = result.spanishTitle;
-            updates.originalTitle = item.title; // Backup original
+        console.log(`🤖 [AI] Respuesta Bruta para ${item.title}:`, resultText.substring(0, 200) + "...");
+
+        // --- STRATEGY 1: Parse JSON ---
+        let result: any = {};
+        let jsonSuccess = false;
+
+        try {
+            const cleanText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+            // Try to find the JSON block if there is extra text around it
+            const firstBrace = cleanText.indexOf('{');
+            const lastBrace = cleanText.lastIndexOf('}');
+            
+            if (firstBrace !== -1 && lastBrace !== -1) {
+                const jsonString = cleanText.substring(firstBrace, lastBrace + 1);
+                result = JSON.parse(jsonString);
+                jsonSuccess = true;
+            }
+        } catch (e) {
+            console.warn(`⚠️ [AI] JSON parsing failed for ${item.title}. Trying text fallback.`);
         }
 
-        // Always update description if we got a Spanish one
-        if (result.spanishDescription) {
+        // --- STRATEGY 2: Fallback extraction (The Safety Net) ---
+        // If JSON didn't give us a URL, scan the WHOLE text for a YouTube link.
+        // Google Search tool often puts the link in the text even if JSON fails.
+        let finalTrailerUrl = '';
+
+        if (jsonSuccess && result.trailerUrl && YOUTUBE_REGEX.test(result.trailerUrl)) {
+            finalTrailerUrl = result.trailerUrl;
+            console.log(`✅ [AI] URL encontrada via JSON: ${finalTrailerUrl}`);
+        } else {
+            // REGEX HUNT
+            console.log(`🔍 [AI] Buscando URL en texto plano (Fallback)...`);
+            const match = resultText.match(YOUTUBE_REGEX);
+            if (match && match[0]) {
+                finalTrailerUrl = match[0];
+                console.log(`✅ [AI] URL encontrada via REGEX en texto: ${finalTrailerUrl}`);
+            } else {
+                console.log(`❌ [AI] No se encontró ninguna URL válida en la respuesta.`);
+            }
+        }
+
+        // --- MERGE & SAVE ---
+        const updates: Partial<MediaItem> = { isEnriched: true };
+        
+        if (jsonSuccess && result.spanishTitle && result.spanishTitle !== item.title) {
+            updates.title = result.spanishTitle;
+            updates.originalTitle = item.title;
+        }
+
+        if (jsonSuccess && result.spanishDescription) {
             updates.description = result.spanishDescription;
         }
 
-        // Validate Trailer
-        if (result.trailerUrl && YOUTUBE_REGEX.test(result.trailerUrl)) {
-            updates.trailerUrl = result.trailerUrl;
-        } else {
-            // Explicitly set to empty if invalid so we don't keep garbage
-            updates.trailerUrl = '';
+        if (finalTrailerUrl) {
+            updates.trailerUrl = finalTrailerUrl;
         }
 
-        console.log(`✨ AI Enriched ${item.title}:`, updates);
+        console.log(`💾 [AI] Guardando cambios en DB para ${item.title}:`, updates);
         
-        // Save to DB (UI will react via subscription)
+        // Save to DB
         await updateMediaItem(item.id, updates);
 
     } catch (e) {
-        console.warn("AI Enrichment failed", e);
-        // Mark as enriched anyway so we don't retry infinitely on error
+        console.error("❌ [AI] CRITICAL ERROR:", e);
+        // Mark as enriched to stop loop
         await updateMediaItem(item.id, { isEnriched: true });
     }
 };
