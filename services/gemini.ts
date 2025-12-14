@@ -4,6 +4,10 @@ import { getAiCache, setAiCache, updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
+const buildCacheKey = (item: SearchResult) => `${item.source}-${item.externalId}`;
+
+const enrichmentCache = new Map<string, SearchResult>();
+const discardedCache = new Set<string>();
 
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;

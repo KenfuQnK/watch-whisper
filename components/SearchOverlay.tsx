@@ -15,8 +15,10 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
   // Search State
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const discardedResultsRef = useRef<SearchResult[]>([]);
 
   // Manual State
   const [manualTitle, setManualTitle] = useState('');
@@ -36,7 +38,8 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
     try {
       const data = await searchMedia(query);
       if (data && data.length > 0) {
-        setResults(data);
+        const sorted = [...data].sort((a, b) => getMetadataScore(b) - getMetadataScore(a));
+        setResults(sorted);
       } else {
         setError("No encontramos nada. Intenta otro título o usa el modo Manual.");
       }
@@ -44,6 +47,27 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
       setError("Error de conexión con las bases de datos.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSelectResult = async (result: SearchResult) => {
+    const discarded = results.filter((item) => item.id !== result.id);
+    if (discarded.length) {
+      discardedResultsRef.current = [...discardedResultsRef.current, ...discarded];
+      rememberDiscardedResults(discarded);
+    }
+
+    setIsEnriching(true);
+    try {
+      const enriched = await enrichInSpanish(result);
+      onAdd(enriched);
+    } catch (enrichError) {
+      console.error('Error enrichInSpanish:', enrichError);
+      onAdd(result);
+    } finally {
+      setIsEnriching(false);
+      onClose();
+      resetState();
     }
   };
 
@@ -71,6 +95,7 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
       setResults([]);
       setManualTitle('');
       setMode('api');
+      setIsEnriching(false);
   };
 
   return (
@@ -128,9 +153,9 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
                                  <X size={20} />
                              </button>
                         )}
-                        <button 
+                        <button
                             type="submit"
-                            disabled={isLoading || !query}
+                            disabled={isLoading || isEnriching || !query}
                             className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-2.5 rounded-xl transition-all shadow-lg"
                         >
                             {isLoading ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
@@ -190,7 +215,7 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
                                         onClick={() => { onAdd(result); onClose(); resetState(); }}
                                         className="mt-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all w-full"
                                     >
-                                        <Plus size={16} /> Seleccionar
+                                        {isEnriching ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />} Seleccionar
                                     </button>
                                 </div>
                             </div>
