@@ -1,5 +1,28 @@
 import { supabase } from '../lib/supabase';
-import { MediaItem } from '../types';
+import { MediaItem, MediaType } from '../types';
+
+// --- AI RESULT CACHE ---
+// Stores translation/trailer results keyed by (title, year, type)
+const aiResultCache = new Map<string, Partial<Pick<MediaItem, 'trailerUrl' | 'description'>>>();
+
+const buildAiCacheKey = (title: string, year?: string, type?: MediaType) =>
+  `${title.toLowerCase().trim()}|${year || ''}|${type || ''}`;
+
+export const getAiCache = (title: string, year?: string, type?: MediaType) => {
+  const key = buildAiCacheKey(title, year, type);
+  return aiResultCache.get(key);
+};
+
+export const setAiCache = (
+  title: string,
+  year: string | undefined,
+  type: MediaType | undefined,
+  data: Partial<Pick<MediaItem, 'trailerUrl' | 'description'>>
+) => {
+  const key = buildAiCacheKey(title, year, type);
+  const prev = aiResultCache.get(key) || {};
+  aiResultCache.set(key, { ...prev, ...data });
+};
 
 // --- MAPPING HELPERS ---
 // Translates between App types (camelCase) and DB columns (snake_case)

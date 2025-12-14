@@ -1,12 +1,56 @@
 import { SearchResult, MediaType, SeasonData } from "../types";
 import { GoogleGenAI } from "@google/genai";
-import { updateMediaItem } from "./db";
+import { getAiCache, setAiCache, updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+
+// Detect language and translate to Spanish when needed
+export const enrichInSpanish = async (
+  item: Pick<SearchResult, "title" | "description" | "type" | "year"> & { id: string }
+): Promise<{ title: string; description: string } | null> => {
+  try {
+    if (!process.env.API_KEY) {
+      console.warn("No API_KEY found for Gemini translation");
+      return null;
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Detecta el idioma del siguiente contenido. Si no es español, traduce el título y la sinopsis a español neutro. 
+    Devuelve siempre un JSON con la forma { "language": "<codigo>", "title": "<titulo_es>", "description": "<sinopsis_es>" } sin texto adicional.
+    Título: "${item.title}"
+    Sinopsis: "${item.description}"
+    Tipo: ${item.type}
+    Año: ${item.year || ""}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const raw = response.text || "";
+    const parsed = JSON.parse(raw);
+    const detectedLang = (parsed.language || "").toString().toLowerCase();
+
+    if (detectedLang === "es") {
+      return null;
+    }
+
+    const translatedTitle = parsed.title || item.title;
+    const translatedDescription = parsed.description || item.description;
+
+    return { title: translatedTitle, description: translatedDescription };
+  } catch (e) {
+    console.warn("Gemini translation failed", e);
+    return null;
+  }
+};
 
 // --- AI TRAILER SEARCH (Background Process) ---
 export const fetchTrailerInBackground = async (
@@ -17,6 +61,13 @@ export const fetchTrailerInBackground = async (
     currentSource?: { title: 'api' | 'ai'; description: 'api' | 'ai'; trailer: 'api' | 'ai' }
 ): Promise<string> => {
     try {
+        const cached = getAiCache(title, year, type);
+        if (cached?.trailerUrl) {
+            console.log(`♻️ Reutilizando tráiler cacheado para ${title} (${year})`);
+            await updateMediaItem(itemId, { trailerUrl: cached.trailerUrl });
+            return cached.trailerUrl;
+        }
+
         if (!process.env.API_KEY) {
             console.warn("No API_KEY found for Gemini trailer search");
             return "";
@@ -77,7 +128,7 @@ export const fetchTrailerInBackground = async (
 };
 
 
-// --- API CLIENTS ---
+// --- API CLIENTS (SIN IA) ---
 
 // 1. CinemaMeta (Stremio Catalog) - VERY ROBUST, CORS Friendly
 const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]> => {
@@ -193,8 +244,55 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
       if (i < series.length) combined.push(series[i]);
       if (i < finalMovies.length) combined.push(finalMovies[i]);
   }
-  
+
   return combined;
+};
+
+// --- POST-PROCESSING (AI ONLY WHEN NEEDED) ---
+
+export const postProcessMediaData = async (item: SearchResult): Promise<SearchResult> => {
+  const needsTitle = !item.title || item.title.trim() === "";
+  const needsDescription = !item.description || item.description.trim() === "" || item.description.toLowerCase().includes("sin descripción");
+
+  // If everything is already populated, skip AI entirely
+  if (!needsTitle && !needsDescription) return item;
+
+  if (!process.env.API_KEY) {
+    console.warn("No API_KEY configured for AI post-processing; returning original data");
+    return item;
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Recibe la ficha de un título audiovisual y completa SOLO los campos faltantes en español.`
+      + ` Si ya existen, respétalos.`
+      + ` Devuelve un JSON plano con las claves \"title\" y \"description\" en español.`
+      + ` Datos conocidos: ${JSON.stringify({
+          title: item.title,
+          description: item.description,
+          year: item.year,
+          type: item.type,
+          source: item.source,
+        })}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    });
+
+    const rawText = (typeof response.text === 'function' ? response.text() : response.text) || '';
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+    return {
+      ...item,
+      title: needsTitle && parsed.title ? parsed.title : item.title,
+      description: needsDescription && parsed.description ? parsed.description : item.description,
+    };
+  } catch (e) {
+    console.warn("AI post-processing failed", e);
+    return item;
+  }
 };
 
 // --- ENRICHMENT FUNCTION ---
