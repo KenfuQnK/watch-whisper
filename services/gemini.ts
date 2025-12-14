@@ -5,115 +5,85 @@ import { updateMediaItem } from "./db";
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
-// Regex to capture ANY YouTube URL found in text
-const YOUTUBE_REGEX_GLOBAL = /(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/g;
+// --- TMDB API IMPLEMENTATION ---
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
-// --- VALIDATION HELPER ---
-const validateYoutubeUrl = async (url: string): Promise<boolean> => {
-    try {
-        const match = url.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
-        if (!match) return false;
-        
-        const cleanUrl = `https://www.youtube.com/watch?v=${match[1]}`;
-        const checkUrl = `https://noembed.com/embed?url=${cleanUrl}`;
-        
-        const res = await fetch(checkUrl);
-        const data = await res.json();
-        
-        if (data.error) {
-            console.warn(`❌ [VALIDATOR] URL Inválida/Borrada: ${cleanUrl}`);
-            return false;
-        }
-        
-        console.log(`✅ [VALIDATOR] URL Verificada: ${cleanUrl} (${data.title})`);
-        return true;
-    } catch (e) {
-        console.warn("⚠️ [VALIDATOR] Error conectando con servicio de validación", e);
-        return false;
-    }
+const getTMDBHeaders = () => {
+    return {
+        accept: 'application/json',
+        Authorization: `Bearer ${process.env.TMDB_READ_TOKEN}`
+    };
 };
 
-// --- YOUTUBE API V3 DIRECT ---
-const fetchTrailerFromYoutubeApi = async (title: string, year: string): Promise<string | null> => {
-    if (!process.env.API_KEY) return null;
-    
-    // We assume the user has enabled YouTube Data API v3 on this key
-    const query = `Trailer oficial español ${title} ${year}`;
-    console.log(`🎥 [YOUTUBE API] Buscando: "${query}" via API V3...`);
-    
+const fetchTrailerFromTMDB = async (title: string, year: string, type: MediaType): Promise<string | null> => {
+    if (!process.env.TMDB_READ_TOKEN) {
+        console.warn("⚠️ [TMDB] No TMDB_READ_TOKEN found. Skipping trailer search.");
+        return null;
+    }
+
     try {
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&key=${process.env.API_KEY}&maxResults=1`;
-        const res = await fetch(url);
+        const tmdbType = type === MediaType.MOVIE ? 'movie' : 'tv';
+        const yearParam = type === MediaType.MOVIE ? `&primary_release_year=${year}` : `&first_air_date_year=${year}`;
         
-        if (!res.ok) {
-            console.warn(`⚠️ [YOUTUBE API] Falló (Status: ${res.status}). Probablemente la API no está habilitada en la key.`);
+        // 1. Search for the ID
+        const searchUrl = `${TMDB_BASE_URL}/search/${tmdbType}?query=${encodeURIComponent(title)}&include_adult=false&language=es-ES&page=1${yearParam}`;
+        
+        const searchRes = await fetch(searchUrl, { headers: getTMDBHeaders() });
+        const searchData = await searchRes.json();
+
+        if (!searchData.results || searchData.results.length === 0) {
+            console.log(`⚠️ [TMDB] No results found for "${title}"`);
             return null;
         }
 
-        const data = await res.json();
-        if (data.items && data.items.length > 0) {
-            const videoId = data.items[0].id.videoId;
-            const fullUrl = `https://www.youtube.com/watch?v=${videoId}`;
-            console.log(`✅ [YOUTUBE API] Encontrado: ${fullUrl}`);
-            return fullUrl;
+        // Best match implies first result usually, but let's check basic title match if possible? 
+        // TMDB search is usually good enough to take the first one.
+        const tmdbId = searchData.results[0].id;
+
+        // 2. Get Videos for that ID
+        // We look for 'es-ES' first, then fallback to 'en-US' (trailers are often in English)
+        let videoResults = [];
+        
+        // Try Spanish
+        const videosEsUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=es-ES`;
+        const videosEsRes = await fetch(videosEsUrl, { headers: getTMDBHeaders() });
+        const videosEsData = await videosEsRes.json();
+        
+        if (videosEsData.results) videoResults = [...videosEsData.results];
+
+        // Try English if no spanish trailer found
+        if (!videoResults.some(v => v.type === "Trailer")) {
+            const videosEnUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=en-US`;
+            const videosEnRes = await fetch(videosEnUrl, { headers: getTMDBHeaders() });
+            const videosEnData = await videosEnRes.json();
+            if (videosEnData.results) videoResults = [...videoResults, ...videosEnData.results];
         }
+
+        // 3. Filter: Site=YouTube, Type=Trailer
+        const trailer = videoResults.find(v => v.site === "YouTube" && v.type === "Trailer");
+
+        if (trailer) {
+            const finalUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
+            console.log(`✅ [TMDB] Trailer found: ${finalUrl}`);
+            return finalUrl;
+        }
+
+        // Fallback: Teaser?
+        const teaser = videoResults.find(v => v.site === "YouTube" && v.type === "Teaser");
+        if (teaser) {
+             return `https://www.youtube.com/watch?v=${teaser.key}`;
+        }
+
         return null;
+
     } catch (e) {
-        console.warn(`⚠️ [YOUTUBE API] Error de red o config:`, e);
+        console.error("❌ [TMDB] Error fetching trailer:", e);
         return null;
     }
 };
 
-// --- AI FALLBACK TRAILER SEARCH ---
-const findTrailerWithAI = async (item: MediaItem, ai: GoogleGenAI): Promise<string> => {
-    const MAX_ATTEMPTS = 3;
-    let finalTrailerUrl = '';
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        if (finalTrailerUrl) break;
-
-        console.log(`🔄 [AI TRAILER] Intento ${attempt}/${MAX_ATTEMPTS} (Fallback)...`);
-        
-        let searchContext = "";
-        if (attempt === 1) searchContext = `trailer español oficial "${item.title}" ${item.year} youtube`;
-        if (attempt === 2) searchContext = `trailer official "${item.title}" ${item.year} youtube`;
-        if (attempt === 3) searchContext = `trailer "${item.title}" movie youtube`;
-
-        const prompt = `
-        TASK: Find a REAL, WORKING YouTube trailer for: "${item.title}" (${item.year}).
-        INSTRUCTIONS:
-        1. USE 'googleSearch' to search exactly for: '${searchContext}'.
-        2. From the search results, EXTRACT any YouTube URLs found.
-        3. RETURN JSON: { "potentialUrls": ["url1"] }
-        `;
-
-        try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: { tools: [{ googleSearch: {} }] }
-            });
-
-            const resultText = response.text || "";
-            const matches = [...resultText.matchAll(YOUTUBE_REGEX_GLOBAL)];
-            const candidates = matches.map(m => m[0]);
-            
-            for (const url of candidates) {
-                const isValid = await validateYoutubeUrl(url);
-                if (isValid) {
-                    finalTrailerUrl = url;
-                    break;
-                }
-            }
-        } catch (e) {
-            console.error(`⚠️ [AI TRAILER] Error en intento ${attempt}:`, e);
-        }
-    }
-    return finalTrailerUrl;
-}
-
-
 // --- METADATA ENRICHMENT (TITLE/DESC) ---
+// Still using AI for translation/metadata normalization as requested previously
 const enrichMetadata = async (item: MediaItem, ai: GoogleGenAI): Promise<Partial<MediaItem>> => {
     console.log(`📚 [METADATA] Traduciendo datos para "${item.title}"...`);
     
@@ -149,7 +119,6 @@ const enrichMetadata = async (item: MediaItem, ai: GoogleGenAI): Promise<Partial
             
             const updates: Partial<MediaItem> = {};
             if (json.spanishTitle && json.spanishTitle !== item.title) {
-                // Double check it's not a garbage title
                 if (!json.spanishTitle.toLowerCase().includes('trailer')) {
                     updates.title = json.spanishTitle;
                     updates.originalTitle = item.title;
@@ -171,35 +140,20 @@ const enrichMetadata = async (item: MediaItem, ai: GoogleGenAI): Promise<Partial
 export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
     if (item.isEnriched) return; 
 
-    if (!process.env.API_KEY) {
-        console.warn("❌ [AI] No API_KEY found");
-        return;
-    }
-
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // We allow enrichment even if one key is missing, we just skip that part
     
-    // We launch 2 independent processes:
-    // 1. Trailer Search (API -> AI Fallback)
-    // 2. Metadata Translation (AI)
-    // We update the DB as soon as each one finishes.
-
-    // --- PROCESS 1: TRAILER ---
+    // --- PROCESS 1: TRAILER (TMDB) ---
     const trailerPromise = (async () => {
-        // Option A: Direct YouTube API (Best)
-        let url = await fetchTrailerFromYoutubeApi(item.title, item.year || '');
-        
-        // Option B: AI Search Fallback
-        if (!url) {
-            url = await findTrailerWithAI(item, ai);
-        }
-
+        const url = await fetchTrailerFromTMDB(item.title, item.year || '', item.type);
         if (url) {
             await updateMediaItem(item.id, { trailerUrl: url });
         }
     })();
 
-    // --- PROCESS 2: METADATA ---
+    // --- PROCESS 2: METADATA (GEMINI) ---
     const metadataPromise = (async () => {
+        if (!process.env.API_KEY) return;
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const changes = await enrichMetadata(item, ai);
         if (Object.keys(changes).length > 0) {
             await updateMediaItem(item.id, changes);

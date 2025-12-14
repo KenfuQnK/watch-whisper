@@ -5,6 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
+import WhisperChat from './components/WhisperChat'; // IMPORTED
 import { getSeriesDetails, enrichMediaContent } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
@@ -393,6 +394,9 @@ const App: React.FC = () => {
             </div>
         )}
       </main>
+
+      {/* WHISPER CHATBOT (New) */}
+      <WhisperChat items={items} users={USERS} />
 
       {/* Floating Action Button */}
       <button 

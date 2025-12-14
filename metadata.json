@@ -1,5 +1,7 @@
 {
   "name": "Watch Whisper",
   "description": "A collaborative movie and series tracker for couples or friends. Organize watchlists, mark items as seen, and discover new content with AI-powered search.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
