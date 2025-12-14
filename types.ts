@@ -35,12 +35,16 @@ export interface MediaItem {
   id: string;
   title: string;
   type: MediaType;
+  source?: 'tvmaze' | 'itunes' | 'cinemeta' | 'manual';
   posterUrl: string;
   backupPosterUrl?: string; // Second chance image
   description: string;
   year?: string;
   addedAt: number;
   collectionId: CollectionType;
+  enrichingTitle?: boolean;
+  enrichingDescription?: boolean;
+  enrichingTrailer?: boolean;
   
   // New Fields
   platform?: string[]; // Changed from Platform (single string) to string array
@@ -65,6 +69,9 @@ export interface SearchResult {
   description: string;
   posterUrl: string;
   backupPosterUrl?: string;
-  seasons?: SeasonData[]; 
+  seasons?: SeasonData[];
   trailerUrl?: string;
+  enrichingTitle?: boolean;
+  enrichingDescription?: boolean;
+  enrichingTrailer?: boolean;
 }

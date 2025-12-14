@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MediaItem, User, MediaType } from '../types';
 import Avatar from './Avatar';
-import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
+import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star, Loader2 } from 'lucide-react';
 
 interface MediaCardProps {
   item: MediaItem;
@@ -43,6 +43,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
       if (item.type === MediaType.SERIES) return status.watchedEpisodes && status.watchedEpisodes.length > 0;
       return false;
   });
+
+  const enrichmentLabels = [
+    item.enrichingTitle && 'Enriqueciendo título',
+    item.enrichingDescription && 'Enriqueciendo descripción',
+    item.enrichingTrailer && 'Buscando tráiler'
+  ].filter(Boolean) as string[];
 
   const percent = users.length > 0 ? (usersWithActivity.length / users.length) * 100 : 0;
   const isFullyWatched = usersWithActivity.length === users.length;
@@ -148,11 +154,22 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         {/* Activity Indicator */}
         <div className="w-full h-1 bg-slate-700 rounded-full overflow-hidden mt-2">
            <div 
-            className={`h-full ${isFullyWatched ? 'bg-green-500' : 'bg-blue-500'} transition-all duration-500`}
-            style={{ width: `${percent}%` }}
-           />
+          className={`h-full ${isFullyWatched ? 'bg-green-500' : 'bg-blue-500'} transition-all duration-500`}
+          style={{ width: `${percent}%` }}
+         />
         </div>
       </div>
+
+      {enrichmentLabels.length > 0 && (
+        <div className="absolute inset-x-3 bottom-3 z-20 flex flex-col gap-2">
+            {enrichmentLabels.map(label => (
+                <div key={label} className="flex items-center gap-2 bg-slate-900/80 text-indigo-100 text-xs font-semibold rounded-lg px-2 py-1 shadow-lg">
+                    <Loader2 size={14} className="animate-spin" />
+                    {label}
+                </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 };

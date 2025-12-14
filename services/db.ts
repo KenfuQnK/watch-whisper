@@ -24,6 +24,9 @@ const mapFromDb = (row: any): MediaItem => {
     year: row.year,
     addedAt: parseInt(row.added_at), // BigInt comes as string sometimes from JSON
     collectionId: row.collection_id,
+    enrichingTitle: row.enriching_title,
+    enrichingDescription: row.enriching_description,
+    enrichingTrailer: row.enriching_trailer,
     platform: platforms,
     releaseDate: row.release_date,
     rating: row.rating,
@@ -47,7 +50,10 @@ const mapToDb = (item: MediaItem) => {
     year: item.year,
     added_at: item.addedAt,
     collection_id: item.collectionId,
-    platform: platformStr, 
+    enriching_title: item.enrichingTitle,
+    enriching_description: item.enrichingDescription,
+    enriching_trailer: item.enrichingTrailer,
+    platform: platformStr,
     release_date: item.releaseDate,
     rating: item.rating,
     trailer_url: item.trailerUrl,
@@ -85,7 +91,10 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.posterUrl !== undefined) dbChanges.poster_url = changes.posterUrl;
   if (changes.backupPosterUrl !== undefined) dbChanges.backup_poster_url = changes.backupPosterUrl;
   if (changes.description !== undefined) dbChanges.description = changes.description;
-  
+  if (changes.enrichingTitle !== undefined) dbChanges.enriching_title = changes.enrichingTitle;
+  if (changes.enrichingDescription !== undefined) dbChanges.enriching_description = changes.enrichingDescription;
+  if (changes.enrichingTrailer !== undefined) dbChanges.enriching_trailer = changes.enrichingTrailer;
+
   if (changes.platform !== undefined) {
       dbChanges.platform = Array.isArray(changes.platform) ? changes.platform.join(',') : changes.platform;
   }

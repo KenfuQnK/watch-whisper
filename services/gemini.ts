@@ -1,6 +1,5 @@
 import { SearchResult, MediaType, SeasonData } from "../types";
 import { GoogleGenAI } from "@google/genai";
-import { updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
@@ -9,7 +8,7 @@ const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim(
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
 // --- AI TRAILER SEARCH (Background Process) ---
-export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
+export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType): Promise<string> => {
     try {
         if (!process.env.API_KEY) {
             console.warn("No API_KEY found for Gemini trailer search");
@@ -41,8 +40,6 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
 
         if (isValid) {
             console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
-            // Save to DB
-            await updateMediaItem(itemId, { trailerUrl: candidateUrl });
             return candidateUrl;
         } else {
             console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
@@ -54,7 +51,6 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
                     if (chunk.web?.uri && YOUTUBE_REGEX.test(chunk.web.uri)) {
                          const validUri = chunk.web.uri;
                          console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
-                         await updateMediaItem(itemId, { trailerUrl: validUri });
                          return validUri;
                     }
                 }
