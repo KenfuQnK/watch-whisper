@@ -35,19 +35,26 @@ export interface MediaItem {
   id: string;
   title: string;
   type: MediaType;
+  source?: 'tvmaze' | 'itunes' | 'cinemeta' | 'manual';
   posterUrl: string;
   backupPosterUrl?: string; // Second chance image
   description: string;
   year?: string;
   addedAt: number;
   collectionId: CollectionType;
+  source: {
+    title: 'api' | 'ai';
+    description: 'api' | 'ai';
+    trailer: 'api' | 'ai';
+  };
   
   // New Fields
   platform?: string[]; // Changed from Platform (single string) to string array
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
   trailerUrl?: string; // YouTube URL
-  trailerStatus?: 'idle' | 'searching' | 'found' | 'failed';
+  enrichmentStatus?: 'pending' | 'complete' | 'failed';
+  enrichmentError?: string;
 
   // Metadata for series structure
   seasons?: SeasonData[];
@@ -66,6 +73,9 @@ export interface SearchResult {
   description: string;
   posterUrl: string;
   backupPosterUrl?: string;
-  seasons?: SeasonData[]; 
+  seasons?: SeasonData[];
   trailerUrl?: string;
+  enrichingTitle?: boolean;
+  enrichingDescription?: boolean;
+  enrichingTrailer?: boolean;
 }
