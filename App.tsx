@@ -9,16 +9,10 @@ import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
-import user1AvatarB64 from './public/user1.txt?raw';
-import user2AvatarB64 from './public/user2.txt?raw';
-
-const user1Avatar = `data:image/png;base64,${user1AvatarB64.trim()}` | 'https://picsum.photos/seed/jesus/200';
-const user2Avatar = `data:image/png;base64,${user2AvatarB64.trim()}` | 'https://picsum.photos/seed/julia/200';
-
 // --- CONFIG ---
 const USERS: User[] = [
-  { id: 'u1', name: 'Jesús', avatar: 'user1Avatar', color: '#6366f1' }, // Indigo
-  { id: 'u2', name: 'Julia', avatar: 'user2Avatar', color: '#ec4899' }, // Pink
+  { id: 'u1', name: 'Jesús', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJesus.PNG', color: '#6366f1' }, // Indigo
+  { id: 'u2', name: 'Julia', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJulia.PNG', color: '#ec4899' }, // Pink
 ];
 
 // Define UI Tabs (Computed, not stored directly as CollectionType)
