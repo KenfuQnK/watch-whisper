@@ -28,7 +28,6 @@ const mapFromDb = (row: any): MediaItem => {
     releaseDate: row.release_date,
     rating: row.rating,
     trailerUrl: row.trailer_url,
-    trailerStatus: row.trailer_url ? 'found' : 'idle',
     seasons: row.seasons,
     userStatus: row.user_status || {}
   };

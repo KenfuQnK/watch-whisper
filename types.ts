@@ -47,10 +47,9 @@ export interface MediaItem {
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
   trailerUrl?: string; // YouTube URL
-  trailerStatus?: 'idle' | 'searching' | 'found' | 'failed';
 
   // Metadata for series structure
-  seasons?: SeasonData[];
+  seasons?: SeasonData[]; 
 
   // Map userId to their specific watch status
   userStatus: Record<string, WatchInfo>; 

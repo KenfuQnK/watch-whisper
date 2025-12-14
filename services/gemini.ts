@@ -8,54 +8,48 @@ const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim(
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
-const validateTrailerUrl = (url: string) => YOUTUBE_REGEX.test(url);
-
-const extractUrlFromText = (text: string) => {
-    const urlMatch = text.match(/https?:\/\/[^\s]+/);
-    return urlMatch ? urlMatch[0] : "";
-};
-
-const extractUrlFromGrounding = (response: any) => {
-    const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
-    if (chunks) {
-        for (const chunk of chunks) {
-            if (chunk.web?.uri && validateTrailerUrl(chunk.web.uri)) {
-                return chunk.web.uri;
-            }
-        }
+// Detect language and translate to Spanish when needed
+export const enrichInSpanish = async (
+  item: Pick<SearchResult, "title" | "description" | "type" | "year"> & { id: string }
+): Promise<{ title: string; description: string } | null> => {
+  try {
+    if (!process.env.API_KEY) {
+      console.warn("No API_KEY found for Gemini translation");
+      return null;
     }
-    return "";
-};
 
-const saveTrailerIfValid = async (itemId: string, title: string, candidate: string) => {
-    if (!candidate || !validateTrailerUrl(candidate)) return "";
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Detecta el idioma del siguiente contenido. Si no es español, traduce el título y la sinopsis a español neutro. 
+    Devuelve siempre un JSON con la forma { "language": "<codigo>", "title": "<titulo_es>", "description": "<sinopsis_es>" } sin texto adicional.
+    Título: "${item.title}"
+    Sinopsis: "${item.description}"
+    Tipo: ${item.type}
+    Año: ${item.year || ""}`;
 
-    console.log(`✅ Trailer validado para ${title}: ${candidate}`);
-    await updateMediaItem(itemId, { trailerUrl: candidate });
-    return candidate;
-};
-
-const proposeAlternativeTrailer = async (
-    ai: GoogleGenAI,
-    title: string,
-    year: string,
-    type: MediaType,
-    failedText: string
-) => {
-    const altPrompt = `The suggested trailer link for "${title}" (${year}) was not valid. Find a different, official YouTube trailer URL for this ${type}.
-Return ONLY the raw YouTube URL. Use Google Search tool to verify the link exists.`;
-
-    const altResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [altPrompt, failedText].filter(Boolean),
-        config: {
-            tools: [{ googleSearch: {} }]
-        }
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
     });
 
-    const altText = altResponse.text || "";
-    const altCandidate = extractUrlFromText(altText) || extractUrlFromGrounding(altResponse);
-    return validateTrailerUrl(altCandidate) ? altCandidate : "";
+    const raw = response.text || "";
+    const parsed = JSON.parse(raw);
+    const detectedLang = (parsed.language || "").toString().toLowerCase();
+
+    if (detectedLang === "es") {
+      return null;
+    }
+
+    const translatedTitle = parsed.title || item.title;
+    const translatedDescription = parsed.description || item.description;
+
+    return { title: translatedTitle, description: translatedDescription };
+  } catch (e) {
+    console.warn("Gemini translation failed", e);
+    return null;
+  }
 };
 
 // --- AI TRAILER SEARCH (Background Process) ---
@@ -81,22 +75,36 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
         });
 
         const text = response.text || "";
-        const candidateFromText = extractUrlFromText(text);
-        const groundedCandidate = extractUrlFromGrounding(response);
+        
+        // 1. Extract potential URL from text
+        const urlMatch = text.match(/https?:\/\/[^\s]+/);
+        const candidateUrl = urlMatch ? urlMatch[0] : "";
 
-        let validTrailer = await saveTrailerIfValid(itemId, title, candidateFromText);
+        // 2. Validate it is a real YouTube link
+        const isValid = YOUTUBE_REGEX.test(candidateUrl);
 
-        if (!validTrailer) {
-            validTrailer = await saveTrailerIfValid(itemId, title, groundedCandidate);
-        }
-
-        if (!validTrailer) {
+        if (isValid) {
+            console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
+            // Save to DB
+            await updateMediaItem(itemId, { trailerUrl: candidateUrl });
+            return candidateUrl;
+        } else {
             console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
-            const alternative = await proposeAlternativeTrailer(ai, title, year, type, text);
-            validTrailer = await saveTrailerIfValid(itemId, title, alternative);
+            
+            // Fallback: Check grounding chunks if text failed (sometimes links are in metadata)
+            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            if (chunks) {
+                for (const chunk of chunks) {
+                    if (chunk.web?.uri && YOUTUBE_REGEX.test(chunk.web.uri)) {
+                         const validUri = chunk.web.uri;
+                         console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
+                         await updateMediaItem(itemId, { trailerUrl: validUri });
+                         return validUri;
+                    }
+                }
+            }
+            return "";
         }
-
-        return validTrailer;
 
     } catch (e) {
         console.warn("Gemini trailer search failed", e);
