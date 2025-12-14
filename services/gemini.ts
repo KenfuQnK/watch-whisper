@@ -8,6 +8,56 @@ const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim(
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
+const validateTrailerUrl = (url: string) => YOUTUBE_REGEX.test(url);
+
+const extractUrlFromText = (text: string) => {
+    const urlMatch = text.match(/https?:\/\/[^\s]+/);
+    return urlMatch ? urlMatch[0] : "";
+};
+
+const extractUrlFromGrounding = (response: any) => {
+    const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+        for (const chunk of chunks) {
+            if (chunk.web?.uri && validateTrailerUrl(chunk.web.uri)) {
+                return chunk.web.uri;
+            }
+        }
+    }
+    return "";
+};
+
+const saveTrailerIfValid = async (itemId: string, title: string, candidate: string) => {
+    if (!candidate || !validateTrailerUrl(candidate)) return "";
+
+    console.log(`✅ Trailer validado para ${title}: ${candidate}`);
+    await updateMediaItem(itemId, { trailerUrl: candidate });
+    return candidate;
+};
+
+const proposeAlternativeTrailer = async (
+    ai: GoogleGenAI,
+    title: string,
+    year: string,
+    type: MediaType,
+    failedText: string
+) => {
+    const altPrompt = `The suggested trailer link for "${title}" (${year}) was not valid. Find a different, official YouTube trailer URL for this ${type}.
+Return ONLY the raw YouTube URL. Use Google Search tool to verify the link exists.`;
+
+    const altResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [altPrompt, failedText].filter(Boolean),
+        config: {
+            tools: [{ googleSearch: {} }]
+        }
+    });
+
+    const altText = altResponse.text || "";
+    const altCandidate = extractUrlFromText(altText) || extractUrlFromGrounding(altResponse);
+    return validateTrailerUrl(altCandidate) ? altCandidate : "";
+};
+
 // --- AI TRAILER SEARCH (Background Process) ---
 export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
     try {
@@ -38,38 +88,22 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
         });
 
         const text = response.text || "";
-        
-        // 1. Extract potential URL from text
-        const urlMatch = text.match(/https?:\/\/[^\s]+/);
-        const candidateUrl = urlMatch ? urlMatch[0] : "";
+        const candidateFromText = extractUrlFromText(text);
+        const groundedCandidate = extractUrlFromGrounding(response);
 
-        // 2. Validate it is a real YouTube link
-        const isValid = YOUTUBE_REGEX.test(candidateUrl);
+        let validTrailer = await saveTrailerIfValid(itemId, title, candidateFromText);
 
-        if (isValid) {
-            console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
-            // Save to DB
-            await updateMediaItem(itemId, { trailerUrl: candidateUrl });
-            setAiCache(title, year, type, { trailerUrl: candidateUrl });
-            return candidateUrl;
-        } else {
-            console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
-            
-            // Fallback: Check grounding chunks if text failed (sometimes links are in metadata)
-            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-            if (chunks) {
-                for (const chunk of chunks) {
-                    if (chunk.web?.uri && YOUTUBE_REGEX.test(chunk.web.uri)) {
-                         const validUri = chunk.web.uri;
-                         console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
-                         await updateMediaItem(itemId, { trailerUrl: validUri });
-                         setAiCache(title, year, type, { trailerUrl: validUri });
-                         return validUri;
-                    }
-                }
-            }
-            return "";
+        if (!validTrailer) {
+            validTrailer = await saveTrailerIfValid(itemId, title, groundedCandidate);
         }
+
+        if (!validTrailer) {
+            console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
+            const alternative = await proposeAlternativeTrailer(ai, title, year, type, text);
+            validTrailer = await saveTrailerIfValid(itemId, title, alternative);
+        }
+
+        return validTrailer;
 
     } catch (e) {
         console.warn("Gemini trailer search failed", e);
@@ -78,7 +112,7 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
 };
 
 
-// --- API CLIENTS ---
+// --- API CLIENTS (SIN IA) ---
 
 // 1. CinemaMeta (Stremio Catalog) - VERY ROBUST, CORS Friendly
 const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]> => {
@@ -194,8 +228,55 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
       if (i < series.length) combined.push(series[i]);
       if (i < finalMovies.length) combined.push(finalMovies[i]);
   }
-  
+
   return combined;
+};
+
+// --- POST-PROCESSING (AI ONLY WHEN NEEDED) ---
+
+export const postProcessMediaData = async (item: SearchResult): Promise<SearchResult> => {
+  const needsTitle = !item.title || item.title.trim() === "";
+  const needsDescription = !item.description || item.description.trim() === "" || item.description.toLowerCase().includes("sin descripción");
+
+  // If everything is already populated, skip AI entirely
+  if (!needsTitle && !needsDescription) return item;
+
+  if (!process.env.API_KEY) {
+    console.warn("No API_KEY configured for AI post-processing; returning original data");
+    return item;
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Recibe la ficha de un título audiovisual y completa SOLO los campos faltantes en español.`
+      + ` Si ya existen, respétalos.`
+      + ` Devuelve un JSON plano con las claves \"title\" y \"description\" en español.`
+      + ` Datos conocidos: ${JSON.stringify({
+          title: item.title,
+          description: item.description,
+          year: item.year,
+          type: item.type,
+          source: item.source,
+        })}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    });
+
+    const rawText = (typeof response.text === 'function' ? response.text() : response.text) || '';
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+    return {
+      ...item,
+      title: needsTitle && parsed.title ? parsed.title : item.title,
+      description: needsDescription && parsed.description ? parsed.description : item.description,
+    };
+  } catch (e) {
+    console.warn("AI post-processing failed", e);
+    return item;
+  }
 };
 
 // --- ENRICHMENT FUNCTION ---

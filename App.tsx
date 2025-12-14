@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, enrichInSpanish, postProcessMediaData } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -165,6 +165,13 @@ const App: React.FC = () => {
         }
     }
 
+    // Apply AI post-processing ONLY when core fields are missing
+    try {
+      finalResult = await postProcessMediaData(finalResult);
+    } catch (e) {
+      console.warn("Post-processing skipped due to error", e);
+    }
+
     const newItem: MediaItem = {
         id: Date.now().toString(),
         ...finalResult, // Contains basic info + episodes
@@ -172,10 +179,11 @@ const App: React.FC = () => {
         addedAt: Date.now(),
         userStatus: {},
         seasons: finalResult.seasons || [],
-        platform: [], 
+        platform: [],
         releaseDate: '',
         rating: 0,
         trailerUrl: '', // Empty initially to be fast
+        trailerStatus: 'searching',
     };
 
     // 2. Update UI Immediately (Add to list)
@@ -184,17 +192,29 @@ const App: React.FC = () => {
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
-        
+
         // 4. Background Process: Fetch Trailer with AI (using Google Search now)
         fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
-            if (trailerUrl) {
-                // FORCE UPDATE LOCAL STATE when promise resolves
-                // This ensures the user sees the "Play Trailer" button appear on the card instantly
-                setItems(currentItems => 
-                    currentItems.map(item => 
-                        item.id === newItem.id ? { ...item, trailerUrl } : item
+            // FORCE UPDATE LOCAL STATE when promise resolves
+            // This ensures the user sees the "Play Trailer" button appear on the card instantly
+            setItems(currentItems =>
+                currentItems.map(item =>
+                    item.id === newItem.id
+                        ? { ...item, trailerUrl, trailerStatus: trailerUrl ? 'found' : 'failed' }
+                        : item
+                )
+            );
+        });
+
+        // 5. Background Process: Translate metadata to Spanish if needed
+        enrichInSpanish(newItem).then((translated) => {
+            if (translated) {
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, ...translated } : item
                     )
                 );
+                updateMediaItem(newItem.id, translated);
             }
         });
 
