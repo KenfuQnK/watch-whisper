@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, enrichInSpanish, postProcessMediaData } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -165,6 +165,13 @@ const App: React.FC = () => {
         }
     }
 
+    // Apply AI post-processing ONLY when core fields are missing
+    try {
+      finalResult = await postProcessMediaData(finalResult);
+    } catch (e) {
+      console.warn("Post-processing skipped due to error", e);
+    }
+
     const newItem: MediaItem = {
         id: Date.now().toString(),
         ...finalResult, // Contains basic info + episodes
@@ -197,6 +204,18 @@ const App: React.FC = () => {
                         : item
                 )
             );
+        });
+
+        // 5. Background Process: Translate metadata to Spanish if needed
+        enrichInSpanish(newItem).then((translated) => {
+            if (translated) {
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, ...translated } : item
+                    )
+                );
+                updateMediaItem(newItem.id, translated);
+            }
         });
 
     } catch (e) {
