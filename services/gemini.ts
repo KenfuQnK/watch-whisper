@@ -27,19 +27,24 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
         const prompt = `
         You are a cinema metadata expert for a Spanish audience.
         Target Item: ${item.type} "${item.title}" (${item.year}).
-        Current Description: "${item.description}".
         
-        Tasks:
-        1. Provide the Title in Spanish (Spain).
-        2. Provide a Description in Spanish (Spain). If the current one is English, translate it naturally.
-        3. Use Google Search to find the OFFICIAL YouTube Trailer URL. Prefer Spanish subtitled or dubbed if available.
+        GOAL: Validate metadata and find a REAL, WORKING YouTube trailer.
         
-        CRITICAL: Output your response ONLY as a raw JSON string (no markdown formatting like \`\`\`json).
-        Structure:
+        INSTRUCTIONS:
+        1. SPANISH INFO: Translate Title and Description to Spanish (Spain).
+        2. TRAILER SEARCH (CRITICAL): 
+           - You MUST use the 'googleSearch' tool to search for: "trailer oficial español ${item.title} ${item.year} youtube".
+           - Look for results from "Netflix", "HBO", "Disney", "Universal", "Warner", or official movie channels.
+           - EXTRACT the EXACT URL from the search result. 
+           - DO NOT GUESS OR INVENT A URL. If the search does not provide a direct YouTube link, return an empty string for the trailer.
+           - Prefer Spanish audio/subs. If not found, English is acceptable.
+
+        OUTPUT FORMAT:
+        Return ONLY a raw JSON string (no markdown).
         {
             "spanishTitle": "string",
             "spanishDescription": "string",
-            "trailerUrl": "string (valid youtube url)"
+            "trailerUrl": "string (MUST be a valid https://www.youtube.com/watch?v=... found in search, or empty string)"
         }
         `;
 
@@ -48,7 +53,6 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
             contents: prompt,
             config: {
                 tools: [{ googleSearch: {} }], // Use Grounding for Trailer
-                // responseMimeType and responseSchema REMOVED to avoid conflict
             }
         });
 
@@ -83,6 +87,9 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
         // Validate Trailer
         if (result.trailerUrl && YOUTUBE_REGEX.test(result.trailerUrl)) {
             updates.trailerUrl = result.trailerUrl;
+        } else {
+            // Explicitly set to empty if invalid so we don't keep garbage
+            updates.trailerUrl = '';
         }
 
         console.log(`✨ AI Enriched ${item.title}:`, updates);
@@ -92,6 +99,8 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
 
     } catch (e) {
         console.warn("AI Enrichment failed", e);
+        // Mark as enriched anyway so we don't retry infinitely on error
+        await updateMediaItem(item.id, { isEnriched: true });
     }
 };
 

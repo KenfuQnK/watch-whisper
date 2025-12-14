@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MediaItem, User, MediaType, Platform, WatchInfo, CollectionType } from '../types';
 import Avatar from './Avatar';
-import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star, Youtube, ExternalLink, Ticket, Download, Zap, Wifi } from 'lucide-react';
+import { X, Check, Trash2, ChevronDown, ChevronRight, Film, Tv, MonitorPlay, Calendar, CheckCircle2, ThumbsUp, ThumbsDown, Star, Youtube, ExternalLink, Ticket, Download, Zap, Wifi, Loader2, Sparkles, Ban } from 'lucide-react';
 
 interface WatchedModalProps {
   item: MediaItem | null;
@@ -62,6 +62,16 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
         setLocalItem(null);
     }
   }, [propItem?.id, isOpen]); // Only update if ID changes or modal re-opens
+
+  // Real-time update from backend (for enrichment status)
+  useEffect(() => {
+      if (propItem && localItem && propItem.id === localItem.id) {
+          // If the backend has enriched the item, update our local view immediately
+          if (propItem.isEnriched && !localItem.isEnriched) {
+              setLocalItem(prev => prev ? ({ ...prev, ...propItem }) : null);
+          }
+      }
+  }, [propItem]);
 
   // --- SAVE & CLOSE LOGIC ---
   const handleSaveAndClose = () => {
@@ -258,7 +268,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                 <X size={20} />
               </button>
 
-              {/* Play Trailer Button on Header */}
+              {/* Play Trailer Button Area */}
               <div className="absolute bottom-4 left-6 z-10 flex gap-2">
                  {localItem.trailerUrl ? (
                     <button 
@@ -268,12 +278,19 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                         <Youtube size={16} /> Ver Trailer
                     </button>
                  ) : (
-                    <button 
-                        onClick={() => setIsEditingTrailer(true)}
-                        className="bg-slate-700/80 hover:bg-slate-600 text-slate-200 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur border border-slate-600 transition-colors"
-                    >
-                        <Youtube size={16} /> Añadir Trailer
-                    </button>
+                    // Logic: If NO trailer, check if AI is still working
+                    !localItem.isEnriched ? (
+                        <div className="bg-indigo-600/50 text-indigo-100 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur border border-indigo-500/30 animate-pulse">
+                            <Loader2 size={14} className="animate-spin" /> Buscando trailer...
+                        </div>
+                    ) : (
+                        <button 
+                            onClick={() => setIsEditingTrailer(true)}
+                            className="bg-slate-700/80 hover:bg-slate-600 text-slate-200 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur border border-slate-600 transition-colors"
+                        >
+                            <Youtube size={16} /> Añadir Trailer
+                        </button>
+                    )
                  )}
               </div>
              </>
@@ -289,17 +306,22 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
             {/* COLUMN 1: Info & Controls */}
             <div className="lg:col-span-5 space-y-6 mb-8 lg:mb-0">
                 <div>
-                    <div className="flex gap-2 mb-2">
+                    <div className="flex gap-2 mb-2 items-center">
                         <span className="bg-indigo-500/80 backdrop-blur text-xs px-2 py-0.5 rounded text-white font-bold uppercase">
                             {localItem.type === MediaType.MOVIE ? 'Película' : 'Serie'}
                         </span>
                         <span className="bg-slate-700/80 backdrop-blur text-xs px-2 py-0.5 rounded text-slate-300">
                             {localItem.year}
                         </span>
+                        {!localItem.isEnriched && (
+                             <span className="text-[10px] text-indigo-400 flex items-center gap-1 animate-pulse">
+                                 <Sparkles size={10} /> Analizando...
+                             </span>
+                        )}
                     </div>
                     <div className="flex items-start justify-between gap-2">
                          <h2 className="text-3xl font-bold text-white mb-2 leading-tight">{localItem.title}</h2>
-                         {(localItem.trailerUrl || isEditingTrailer) && (
+                         {(localItem.trailerUrl || isEditingTrailer || localItem.isEnriched) && (
                              <button onClick={() => setIsEditingTrailer(!isEditingTrailer)} className="text-slate-500 hover:text-white p-1" title="Editar URL Trailer">
                                  <ExternalLink size={14} />
                              </button>
@@ -323,13 +345,19 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
                         </div>
                     )}
 
-                    <p className="text-slate-300 text-sm leading-relaxed">{localItem.description}</p>
+                    <p className="text-slate-300 text-sm leading-relaxed">
+                        {localItem.description}
+                        {!localItem.isEnriched && !localItem.description && (
+                            <span className="italic opacity-50 block mt-2">Buscando sinopsis en español...</span>
+                        )}
+                    </p>
                 </div>
 
                 {/* Rating System */}
                 <div className="bg-slate-900/40 p-3 rounded-xl border border-slate-700/50">
                     <label className="text-[10px] text-slate-400 uppercase font-bold mb-2 block">Valoración</label>
                     <div className="flex gap-2">
+                        <RatingButton value={0} activeColor="text-red-600" icon={<Ban size={20} />} label="Descartado" />
                         <RatingButton value={1} activeColor="text-red-500" icon={<ThumbsDown size={20} />} label="Mala" />
                         <RatingButton value={2} activeColor="text-blue-400" icon={<ThumbsUp size={20} />} label="Buena" />
                         <RatingButton 

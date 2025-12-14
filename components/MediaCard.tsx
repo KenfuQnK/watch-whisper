@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MediaItem, User, MediaType } from '../types';
 import Avatar from './Avatar';
-import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
+import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star, Loader2, Ban } from 'lucide-react';
 
 interface MediaCardProps {
   item: MediaItem;
@@ -51,8 +51,10 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
   if (imageState === 1 && item.backupPosterUrl) currentSrc = item.backupPosterUrl;
 
   const renderRating = () => {
-      if (!item.rating) return null;
+      if (item.rating === undefined) return null; // 0 is a valid rating now
+      
       switch(item.rating) {
+          case 0: return <div className="bg-red-700 text-white p-1 rounded-full"><Ban size={12} /></div>;
           case 1: return <div className="bg-red-500 text-white p-1 rounded-full"><ThumbsDown size={12} /></div>;
           case 2: return <div className="bg-blue-500 text-white p-1 rounded-full"><ThumbsUp size={12} /></div>;
           case 3: return <div className="bg-pink-500 text-white p-1 rounded-full flex"><ThumbsUp size={10} className="-mr-1" /><ThumbsUp size={10} /></div>;
@@ -64,10 +66,13 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
   // Safe Platform Access (ensure array)
   const platforms = Array.isArray(item.platform) ? item.platform : (item.platform ? [item.platform] : []);
 
+  // Grayscale for discarded
+  const isDiscarded = item.rating === 0;
+
   return (
     <div 
       onClick={() => onClick(item)}
-      className="group relative flex flex-col bg-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 cursor-pointer w-full aspect-[2/3]"
+      className={`group relative flex flex-col bg-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 cursor-pointer w-full aspect-[2/3] ${isDiscarded ? 'grayscale hover:grayscale-0 opacity-70 hover:opacity-100' : ''}`}
     >
       {/* Background Image Area */}
       <div className="absolute inset-0 bg-slate-800 flex items-center justify-center overflow-hidden">
@@ -120,8 +125,17 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         )}
       </div>
 
-      {/* Watched Status (Avatars) & Rating - ONLY ON HOVER */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+      {/* Processing Indicator */}
+      {!item.isEnriched && (
+          <div className="absolute top-3 right-3 z-10">
+               <div className="bg-black/50 backdrop-blur rounded-full p-1.5" title="Procesando datos...">
+                   <Loader2 size={12} className="animate-spin text-white" />
+               </div>
+          </div>
+      )}
+
+      {/* Watched Status (Avatars) & Rating - ONLY ON HOVER (Unless processing) */}
+      <div className={`absolute top-3 right-3 flex flex-col items-end gap-2 z-10 ${item.isEnriched ? 'opacity-0 group-hover:opacity-100' : 'opacity-0'} transition-opacity duration-300`}>
         <div className="flex -space-x-2">
             {usersWithActivity.map(user => (
             <Avatar key={user.id} user={user} size="sm" className="border-slate-900 ring-0" />

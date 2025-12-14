@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, ListFilter, Film, Tv, Download, Upload, Filter, Calendar, Loader2 } from 'lucide-react';
+import { Plus, ListFilter, Film, Tv, Download, Upload, Filter, Calendar, Loader2, Ban } from 'lucide-react';
 import { MediaItem, User, MediaType, CollectionType, SearchResult, WatchInfo } from './types';
 import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
@@ -16,7 +16,7 @@ const USERS: User[] = [
 ];
 
 // Define UI Tabs (Computed, not stored directly as CollectionType)
-type UiTab = 'pending' | 'inprogress' | 'finished';
+type UiTab = 'pending' | 'inprogress' | 'finished' | 'discarded';
 
 const App: React.FC = () => {
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -73,9 +73,17 @@ const App: React.FC = () => {
   }, [items]);
 
   // --- HELPERS FOR STATUS ---
+  
+  // Calculate total episodes for a series
+  const getTotalEpisodes = (item: MediaItem) => {
+      if (item.type === MediaType.MOVIE) return 1;
+      return item.seasons?.reduce((acc, s) => acc + s.episodeCount, 0) || 0;
+  };
+
   const getStatusCounts = (item: MediaItem) => {
       let startedCount = 0;
       let finishedCount = 0;
+      const totalEpisodes = getTotalEpisodes(item);
 
       USERS.forEach(user => {
           const status = item.userStatus[user.id];
@@ -87,14 +95,18 @@ const App: React.FC = () => {
                   finishedCount++;
               }
           } else {
-              // Series
-              const epCount = status.watchedEpisodes?.length || 0;
-              if (epCount > 0) startedCount++;
+              // Series Logic
+              const watchedEps = status.watchedEpisodes?.length || 0;
               
-              // For Series "Finished" logic:
-              // If we wanted to be strict, we'd compare against total episodes.
-              // For "A Medias" logic:
-              if (epCount > 0) finishedCount++; 
+              if (watchedEps > 0) {
+                  startedCount++;
+              }
+              
+              // STRICT Finished logic: Must watch ALL episodes
+              // Only count as finished if we have episode data and user matched it
+              if (totalEpisodes > 0 && watchedEps >= totalEpisodes) {
+                  finishedCount++;
+              }
           }
       });
       return { startedCount, finishedCount };
@@ -103,31 +115,43 @@ const App: React.FC = () => {
   // --- FILTERING LOGIC ---
   const filteredItems = useMemo(() => {
     return items.filter(item => {
+        
+        // 1. Discarded Logic (Overrides everything else)
+        if (item.rating === 0) {
+            return activeTab === 'discarded';
+        }
+
+        // If we are in the discarded tab, only show rating 0 items
+        if (activeTab === 'discarded') return false;
+
         const { startedCount, finishedCount } = getStatusCounts(item);
         const totalUsers = USERS.length;
 
-        // 1. Tab Logic
+        // 2. Tab Logic (for non-discarded items)
         if (activeTab === 'pending') {
             // No one has started it
             if (startedCount > 0) return false;
         } else if (activeTab === 'inprogress') {
             // "A medias": At least one started, but NOT everyone has "finished"
             if (startedCount === 0) return false; // Pending
-            if (finishedCount === totalUsers) return false; // Everyone saw it
+            if (finishedCount === totalUsers) return false; // Everyone finished it
         } else if (activeTab === 'finished') {
-             // Everyone has seen it
+             // Everyone has strictly finished it
              if (finishedCount < totalUsers) return false;
         }
 
-        // 2. Type Filter
+        // 3. Type Filter
         if (activeFilter !== 'all' && item.type !== activeFilter) return false;
 
-        // 3. User Filter
+        // 4. User Filter
         if (userFilter) {
             // Show item if this specific user has interacted with it
             const s = item.userStatus[userFilter];
             const hasActivity = s && (s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
             
+            // Allow showing in pending even if no activity (since user wants to see what is pending for THEM too maybe? 
+            // Actually usually filters imply "show my stuff". For pending, it's everything.)
+            // Let's keep logic: if filtering by user, show items that user has touched OR items that are pending.
             if (activeTab !== 'pending' && !hasActivity) return false;
         }
 
@@ -137,14 +161,18 @@ const App: React.FC = () => {
 
   // Tab Counts for Badge
   const counts = useMemo(() => {
-      let pending = 0, inprogress = 0, finished = 0;
+      let pending = 0, inprogress = 0, finished = 0, discarded = 0;
       items.forEach(item => {
+          if (item.rating === 0) {
+              discarded++;
+              return;
+          }
           const { startedCount, finishedCount } = getStatusCounts(item);
           if (startedCount === 0) pending++;
           else if (finishedCount === USERS.length) finished++;
           else inprogress++;
       });
-      return { pending, inprogress, finished };
+      return { pending, inprogress, finished, discarded };
   }, [items]);
 
   const handleAddItem = async (result: SearchResult) => {
@@ -173,7 +201,7 @@ const App: React.FC = () => {
         seasons: finalResult.seasons || [],
         platform: [], 
         releaseDate: '',
-        rating: 0,
+        rating: undefined, // undefined implies unrated/pending. 0 implies discarded.
         trailerUrl: '', 
         isEnriched: false // Flag to trigger AI background process
     };
@@ -248,8 +276,8 @@ const App: React.FC = () => {
       <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-pink-500 flex items-center justify-center font-bold text-white">
-              W
+            <div className="w-10 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-pink-500 flex items-center justify-center font-bold text-white tracking-widest text-sm">
+              WW
             </div>
             <h1 className="text-xl font-bold tracking-tight">Watch Whisper <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</span></h1>
           </div>
@@ -268,25 +296,31 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        {/* Navigation Tabs (3 States) */}
+        {/* Navigation Tabs (4 States) */}
         <div className="max-w-6xl mx-auto px-4 flex gap-6 overflow-x-auto no-scrollbar mt-2 md:mt-0">
           <button 
             onClick={() => setActiveTab('pending')}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'pending' ? 'border-indigo-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'pending' ? 'border-indigo-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
           >
             Pendientes <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.pending}</span>
           </button>
           <button 
             onClick={() => setActiveTab('inprogress')}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'inprogress' ? 'border-orange-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'inprogress' ? 'border-orange-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
           >
             A Medias <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.inprogress}</span>
           </button>
           <button 
             onClick={() => setActiveTab('finished')}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'finished' ? 'border-green-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'finished' ? 'border-green-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
           >
             Terminados <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.finished}</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('discarded')}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'discarded' ? 'border-red-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+          >
+            Descartados <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.discarded}</span>
           </button>
         </div>
       </header>
