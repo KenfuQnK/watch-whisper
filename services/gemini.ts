@@ -8,6 +8,56 @@ const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim(
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
+// Detect language and translate to Spanish when needed
+export const enrichInSpanish = async (
+  item: Pick<SearchResult, "title" | "description" | "type" | "year"> & { id: string }
+): Promise<{ title: string; description: string } | null> => {
+  try {
+    if (!process.env.API_KEY) {
+      console.warn("No API_KEY found for Gemini translation");
+      return null;
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Detecta el idioma del siguiente contenido. Si no es español, traduce el título y la sinopsis a español neutro.
+Devuelve un JSON exacto con la forma { "language": "<codigo>", "title": "<titulo_es>", "description": "<sinopsis_es>" } sin comentario adicional.
+Título: "${item.title}"
+Sinopsis: "${item.description}"
+Tipo: ${item.type}
+Año: ${item.year || ""}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const raw = response.response?.text() || "";
+    const cleaned = raw.trim().replace(/^```json\n?|```$/g, "");
+    const parsed = JSON.parse(cleaned);
+    const detectedLang = (parsed.language || "").toString().toLowerCase();
+
+    if (detectedLang === "es") {
+      return null;
+    }
+
+    const translatedTitle = parsed.title || item.title;
+    const translatedDescription = parsed.description || item.description;
+
+    return { title: translatedTitle, description: translatedDescription };
+  } catch (e) {
+    console.warn("Gemini translation failed", e);
+    return null;
+  }
+};
+
 // --- AI TRAILER SEARCH (Background Process) ---
 export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
     try {
