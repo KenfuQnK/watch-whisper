@@ -11,8 +11,8 @@ import { supabase } from './lib/supabase';
 
 // --- CONFIG ---
 const USERS: User[] = [
-  { id: 'u1', name: 'Jesús', avatar: 'https://picsum.photos/seed/jesus/200', color: '#6366f1' }, // Indigo
-  { id: 'u2', name: 'Julia', avatar: 'https://picsum.photos/seed/julia/200', color: '#ec4899' }, // Pink
+  { id: 'u1', name: 'Jesús', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJesus.PNG', color: '#6366f1' }, // Indigo
+  { id: 'u2', name: 'Julia', avatar: 'https://c8rdtkrvdfv40ceo.public.blob.vercel-storage.com/imgJulia.PNG', color: '#ec4899' }, // Pink
 ];
 
 // Define UI Tabs (Computed, not stored directly as CollectionType)
