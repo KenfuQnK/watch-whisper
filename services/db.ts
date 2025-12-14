@@ -47,6 +47,7 @@ const mapFromDb = (row: any): MediaItem => {
     year: row.year,
     addedAt: parseInt(row.added_at), // BigInt comes as string sometimes from JSON
     collectionId: row.collection_id,
+    source: row.source || { title: 'api', description: 'api', trailer: 'api' },
     platform: platforms,
     releaseDate: row.release_date,
     rating: row.rating,
@@ -70,7 +71,8 @@ const mapToDb = (item: MediaItem) => {
     year: item.year,
     added_at: item.addedAt,
     collection_id: item.collectionId,
-    platform: platformStr, 
+    source: item.source,
+    platform: platformStr,
     release_date: item.releaseDate,
     rating: item.rating,
     trailer_url: item.trailerUrl,
@@ -119,6 +121,7 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.seasons !== undefined) dbChanges.seasons = changes.seasons;
   if (changes.userStatus !== undefined) dbChanges.user_status = changes.userStatus;
   if (changes.collectionId !== undefined) dbChanges.collection_id = changes.collectionId;
+  if (changes.source !== undefined) dbChanges.source = changes.source;
 
   const { error } = await supabase
     .from('media_items')

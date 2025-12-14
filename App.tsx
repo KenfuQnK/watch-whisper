@@ -100,6 +100,8 @@ const App: React.FC = () => {
       return { startedCount, finishedCount };
   };
 
+  const defaultSource = useMemo(() => ({ title: 'api', description: 'api', trailer: 'api' as const }), []);
+
   // --- FILTERING LOGIC ---
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -177,9 +179,10 @@ const App: React.FC = () => {
         ...finalResult, // Contains basic info + episodes
         collectionId: CollectionType.WATCHLIST,
         addedAt: Date.now(),
+        source: { ...defaultSource },
         userStatus: {},
         seasons: finalResult.seasons || [],
-        platform: [], 
+        platform: [],
         releaseDate: '',
         rating: 0,
         trailerUrl: '', // Empty initially to be fast
@@ -193,7 +196,7 @@ const App: React.FC = () => {
         await addMediaItem(newItem);
         
         // 4. Background Process: Fetch Trailer with AI (using Google Search now)
-        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
+        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id, newItem.source).then((trailerUrl) => {
             if (trailerUrl) {
                 // FORCE UPDATE LOCAL STATE when promise resolves
                 // This ensures the user sees the "Play Trailer" button appear on the card instantly

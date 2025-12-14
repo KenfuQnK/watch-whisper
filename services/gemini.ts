@@ -53,7 +53,13 @@ export const enrichInSpanish = async (
 };
 
 // --- AI TRAILER SEARCH (Background Process) ---
-export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
+export const fetchTrailerInBackground = async (
+    title: string,
+    year: string,
+    type: MediaType,
+    itemId: string,
+    currentSource?: { title: 'api' | 'ai'; description: 'api' | 'ai'; trailer: 'api' | 'ai' }
+): Promise<string> => {
     try {
         const cached = getAiCache(title, year, type);
         if (cached?.trailerUrl) {
@@ -92,8 +98,9 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
 
         if (isValid) {
             console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
+            const newSource = currentSource ? { ...currentSource, trailer: 'ai' } : { title: 'api', description: 'api', trailer: 'ai' };
             // Save to DB
-            await updateMediaItem(itemId, { trailerUrl: candidateUrl });
+            await updateMediaItem(itemId, { trailerUrl: candidateUrl, source: newSource });
             return candidateUrl;
         } else {
             console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
@@ -105,7 +112,8 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
                     if (chunk.web?.uri && YOUTUBE_REGEX.test(chunk.web.uri)) {
                          const validUri = chunk.web.uri;
                          console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
-                         await updateMediaItem(itemId, { trailerUrl: validUri });
+                         const newSource = currentSource ? { ...currentSource, trailer: 'ai' } : { title: 'api', description: 'api', trailer: 'ai' };
+                         await updateMediaItem(itemId, { trailerUrl: validUri, source: newSource });
                          return validUri;
                     }
                 }
