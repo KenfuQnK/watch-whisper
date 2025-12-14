@@ -1,6 +1,6 @@
 import { SearchResult, MediaType, SeasonData } from "../types";
 import { GoogleGenAI } from "@google/genai";
-import { updateMediaItem } from "./db";
+import { getAiCache, setAiCache, updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
@@ -11,6 +11,13 @@ const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be
 // --- AI TRAILER SEARCH (Background Process) ---
 export const fetchTrailerInBackground = async (title: string, year: string, type: MediaType, itemId: string): Promise<string> => {
     try {
+        const cached = getAiCache(title, year, type);
+        if (cached?.trailerUrl) {
+            console.log(`♻️ Reutilizando tráiler cacheado para ${title} (${year})`);
+            await updateMediaItem(itemId, { trailerUrl: cached.trailerUrl });
+            return cached.trailerUrl;
+        }
+
         if (!process.env.API_KEY) {
             console.warn("No API_KEY found for Gemini trailer search");
             return "";
@@ -43,6 +50,7 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
             console.log(`✅ Trailer validado para ${title}: ${candidateUrl}`);
             // Save to DB
             await updateMediaItem(itemId, { trailerUrl: candidateUrl });
+            setAiCache(title, year, type, { trailerUrl: candidateUrl });
             return candidateUrl;
         } else {
             console.warn(`❌ Gemini encontró algo pero no es un link válido de YT: ${text}`);
@@ -55,6 +63,7 @@ export const fetchTrailerInBackground = async (title: string, year: string, type
                          const validUri = chunk.web.uri;
                          console.log(`✅ Trailer encontrado en metadatos para ${title}: ${validUri}`);
                          await updateMediaItem(itemId, { trailerUrl: validUri });
+                         setAiCache(title, year, type, { trailerUrl: validUri });
                          return validUri;
                     }
                 }
