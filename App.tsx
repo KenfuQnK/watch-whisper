@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, postProcessMediaData } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -163,6 +163,13 @@ const App: React.FC = () => {
         } catch(e) {
             console.error("Error fetching episodes", e);
         }
+    }
+
+    // Apply AI post-processing ONLY when core fields are missing
+    try {
+      finalResult = await postProcessMediaData(finalResult);
+    } catch (e) {
+      console.warn("Post-processing skipped due to error", e);
     }
 
     const newItem: MediaItem = {

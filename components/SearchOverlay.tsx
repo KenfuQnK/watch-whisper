@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Search, Loader2, Plus, AlertCircle, Edit3, Film, Tv, Sparkles, X } from 'lucide-react';
-import { searchMedia } from '../services/gemini'; // Keeping filename but using new logic
+import { Search, Loader2, Plus, AlertCircle, Edit3, Film, Tv, X } from 'lucide-react';
+import { searchMedia } from '../services/gemini';
 import { SearchResult, MediaType } from '../types';
 
 interface SearchOverlayProps {
@@ -24,6 +24,7 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
 
   if (!isOpen) return null;
 
+  // Búsqueda 100% basada en APIs externas (sin IA)
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
