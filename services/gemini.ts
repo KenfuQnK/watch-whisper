@@ -5,138 +5,177 @@ import { updateMediaItem } from "./db";
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
 
-// Regex to validate real YouTube URLs (standard watch URLs and short URLs)
-const YOUTUBE_REGEX = /(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+// Regex to capture ANY YouTube URL found in text
+const YOUTUBE_REGEX_GLOBAL = /(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/g;
+
+// --- VALIDATION HELPER ---
+// Uses noembed.com (CORS friendly) to check if a video actually exists and is public.
+const validateYoutubeUrl = async (url: string): Promise<boolean> => {
+    try {
+        // Extract ID to clean up URL before checking
+        const match = url.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+        if (!match) return false;
+        
+        const cleanUrl = `https://www.youtube.com/watch?v=${match[1]}`;
+        const checkUrl = `https://noembed.com/embed?url=${cleanUrl}`;
+        
+        const res = await fetch(checkUrl);
+        const data = await res.json();
+        
+        // noembed returns { error: "..." } if invalid
+        if (data.error) {
+            console.warn(`❌ [VALIDATOR] URL Inválida/Borrada: ${cleanUrl}`);
+            return false;
+        }
+        
+        console.log(`✅ [VALIDATOR] URL Verificada: ${cleanUrl} (${data.title})`);
+        return true;
+    } catch (e) {
+        // If validation service fails, we assume false to be safe, or true if we trust regex? 
+        // Let's assume false to avoid broken links.
+        console.warn("⚠️ [VALIDATOR] Error conectando con servicio de validación", e);
+        return false;
+    }
+};
 
 // --- AI ENRICHMENT PIPELINE (Background Process) ---
-// This acts "After" the API data is saved. It polishes the data.
 export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
     if (item.isEnriched) return; 
 
-    console.log(`🤖 [AI] START: Iniciando enriquecimiento para "${item.title}"...`);
+    console.log(`🤖 [AI] START: Buscando datos VERIFICADOS para "${item.title}"...`);
 
-    try {
-        if (!process.env.API_KEY) {
-            console.warn("❌ [AI] No API_KEY found");
-            return;
-        }
+    if (!process.env.API_KEY) {
+        console.warn("❌ [AI] No API_KEY found");
+        return;
+    }
 
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    let finalTrailerUrl = '';
+    let spanishTitle = '';
+    let spanishDescription = '';
+    
+    // RETRY LOOP FOR TRAILER
+    // We will try up to 3 times to find a working URL
+    const MAX_ATTEMPTS = 3;
+    
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (finalTrailerUrl) break; // Exit if found
+
+        console.log(`🔄 [AI] Intento ${attempt}/${MAX_ATTEMPTS} buscando trailer...`);
         
-        // Simplified prompt focusing on Search first, JSON second.
-        const prompt = `
-        TASK: Find metadata and a YouTube trailer for the ${item.type}: "${item.title}" (${item.year}).
+        // Varies prompt slightly to try different angles
+        let searchContext = "";
+        if (attempt === 1) searchContext = `trailer español oficial "${item.title}" ${item.year} youtube`; // Specific Spanish
+        if (attempt === 2) searchContext = `trailer official "${item.title}" ${item.year} youtube`; // English/Global
+        if (attempt === 3) searchContext = `trailer "${item.title}" movie youtube`; // Broad
 
-        STEPS:
-        1. USE THE 'googleSearch' TOOL to search for: "trailer español ${item.title} ${item.year} youtube".
-        2. From the search results, COPY the most accurate YouTube URL (watch?v=...).
-        3. Translate Title and Description to Spanish (Spain).
-        4. Output the result in JSON format.
+        const prompt = `
+        TASK: Find metadata and a REAL, WORKING YouTube trailer for: "${item.title}" (${item.year}).
+        
+        INSTRUCTIONS:
+        1. USE 'googleSearch' to search exactly for: '${searchContext}'.
+        2. From the search results, EXTRACT any YouTube URLs found.
+        3. Translate Title/Description to Spanish (Spain).
+        4. Output valid JSON.
 
         JSON STRUCTURE:
         {
             "spanishTitle": "...",
             "spanishDescription": "...",
-            "trailerUrl": "..."
+            "potentialUrls": ["url1", "url2"] 
         }
         `;
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }], 
-            }
-        });
-
-        let resultText = response.text;
-        
-        if (!resultText) {
-            console.warn(`⚠️ [AI] Respuesta vacía para ${item.title}`);
-            return;
-        }
-
-        console.log(`🤖 [AI] Respuesta Bruta para ${item.title}:`, resultText.substring(0, 200) + "...");
-
-        // --- STRATEGY 1: Parse JSON ---
-        let result: any = {};
-        let jsonSuccess = false;
-
         try {
-            const cleanText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-            // Try to find the JSON block if there is extra text around it
-            const firstBrace = cleanText.indexOf('{');
-            const lastBrace = cleanText.lastIndexOf('}');
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: { tools: [{ googleSearch: {} }] }
+            });
+
+            const resultText = response.text || "";
             
-            if (firstBrace !== -1 && lastBrace !== -1) {
-                const jsonString = cleanText.substring(firstBrace, lastBrace + 1);
-                result = JSON.parse(jsonString);
-                jsonSuccess = true;
+            // 1. Extract Metadata (Only on first attempt or if missing)
+            if (!spanishDescription) {
+                try {
+                    const cleanText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const firstBrace = cleanText.indexOf('{');
+                    const lastBrace = cleanText.lastIndexOf('}');
+                    if (firstBrace !== -1) {
+                        const json = JSON.parse(cleanText.substring(firstBrace, lastBrace + 1));
+                        spanishTitle = json.spanishTitle;
+                        spanishDescription = json.spanishDescription;
+                    }
+                } catch(e) { /* Ignore JSON parse error, focus on regex later */ }
             }
+
+            // 2. Extract ALL YouTube URLs from the raw text (ignoring JSON structure issues)
+            const matches = [...resultText.matchAll(YOUTUBE_REGEX_GLOBAL)];
+            const candidates = matches.map(m => m[0]);
+            
+            console.log(`🔎 [AI] URLs candidatas encontradas en texto:`, candidates);
+
+            // 3. Verify Candidates
+            for (const url of candidates) {
+                const isValid = await validateYoutubeUrl(url);
+                if (isValid) {
+                    finalTrailerUrl = url;
+                    break; // Found one! Stop checking candidates.
+                }
+            }
+
         } catch (e) {
-            console.warn(`⚠️ [AI] JSON parsing failed for ${item.title}. Trying text fallback.`);
+            console.error(`⚠️ [AI] Error en intento ${attempt}:`, e);
         }
-
-        // --- STRATEGY 2: Fallback extraction (The Safety Net) ---
-        // If JSON didn't give us a URL, scan the WHOLE text for a YouTube link.
-        // Google Search tool often puts the link in the text even if JSON fails.
-        let finalTrailerUrl = '';
-
-        if (jsonSuccess && result.trailerUrl && YOUTUBE_REGEX.test(result.trailerUrl)) {
-            finalTrailerUrl = result.trailerUrl;
-            console.log(`✅ [AI] URL encontrada via JSON: ${finalTrailerUrl}`);
-        } else {
-            // REGEX HUNT
-            console.log(`🔍 [AI] Buscando URL en texto plano (Fallback)...`);
-            const match = resultText.match(YOUTUBE_REGEX);
-            if (match && match[0]) {
-                finalTrailerUrl = match[0];
-                console.log(`✅ [AI] URL encontrada via REGEX en texto: ${finalTrailerUrl}`);
-            } else {
-                console.log(`❌ [AI] No se encontró ninguna URL válida en la respuesta.`);
-            }
-        }
-
-        // --- MERGE & SAVE ---
-        const updates: Partial<MediaItem> = { isEnriched: true };
-        
-        if (jsonSuccess && result.spanishTitle && result.spanishTitle !== item.title) {
-            updates.title = result.spanishTitle;
-            updates.originalTitle = item.title;
-        }
-
-        if (jsonSuccess && result.spanishDescription) {
-            updates.description = result.spanishDescription;
-        }
-
-        if (finalTrailerUrl) {
-            updates.trailerUrl = finalTrailerUrl;
-        }
-
-        console.log(`💾 [AI] Guardando cambios en DB para ${item.title}:`, updates);
-        
-        // Save to DB
-        await updateMediaItem(item.id, updates);
-
-    } catch (e) {
-        console.error("❌ [AI] CRITICAL ERROR:", e);
-        // Mark as enriched to stop loop
-        await updateMediaItem(item.id, { isEnriched: true });
     }
+
+    // --- SAVE RESULT ---
+    const updates: Partial<MediaItem> = { isEnriched: true };
+    
+    if (spanishTitle && spanishTitle !== item.title) {
+        updates.title = spanishTitle;
+        updates.originalTitle = item.title;
+    }
+    if (spanishDescription) updates.description = spanishDescription;
+    
+    if (finalTrailerUrl) {
+        console.log(`🎉 [AI] ¡Trailer válido encontrado y guardado!: ${finalTrailerUrl}`);
+        updates.trailerUrl = finalTrailerUrl;
+    } else {
+        console.warn(`⛔ [AI] Imposible encontrar trailer válido tras ${MAX_ATTEMPTS} intentos. Se deja vacío.`);
+        updates.trailerUrl = ''; // Ensure we don't save garbage
+    }
+
+    await updateMediaItem(item.id, updates);
 };
 
 
-// --- API CLIENTS (The "Raw" Data Layer) ---
+// --- API CLIENTS (Raw Data Layer) ---
 
-// 1. iTunes Search API (Best for Spanish data + High Quality Images)
+// Helper for timeout fetching
+const fetchWithTimeout = async (url: string, timeout = 3000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(id);
+        return response;
+    } catch (e) {
+        clearTimeout(id);
+        throw e;
+    }
+};
+
+// 1. iTunes Search API (Timeout Protected)
 const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => {
   try {
-    // Prioritize Spanish (ES) results
+    // Changed proxy to corsproxy.io (faster/more reliable currently) or directly failing over
+    // If this fails, we just return empty array quickly.
     const targetUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=movie&entity=movie&country=ES&lang=es_es&limit=15`;
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
     
-    const res = await fetch(proxyUrl);
-    if (!res.ok) return [];
+    const res = await fetchWithTimeout(proxyUrl, 2500); // 2.5s hard timeout
+    if (!res.ok) throw new Error("iTunes Error");
     
     const data = await res.json();
     
@@ -144,7 +183,7 @@ const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => 
       id: `itunes-${item.trackId}`,
       externalId: item.trackId,
       source: 'itunes',
-      title: item.trackName, // Usually in Spanish due to country=ES param
+      title: item.trackName,
       type: MediaType.MOVIE,
       year: item.releaseDate ? item.releaseDate.substring(0, 4) : '',
       description: item.longDescription || item.shortDescription || '',
@@ -152,15 +191,16 @@ const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => 
       backupPosterUrl: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x600bb') : '',
     }));
   } catch (e) {
+    console.warn("iTunes Search timed out or failed, skipping...");
     return [];
   }
 };
 
-// 2. CinemaMeta (Stremio Catalog) - Good fallback
+// 2. CinemaMeta (Stremio Catalog)
 const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]> => {
     try {
         const url = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(query)}.json`;
-        const res = await fetch(url);
+        const res = await fetchWithTimeout(url, 3000);
         const data = await res.json();
         
         if (!data.metas || !Array.isArray(data.metas)) return [];
@@ -181,11 +221,11 @@ const fetchMoviesFromCinemaMeta = async (query: string): Promise<SearchResult[]>
     }
 }
 
-// 3. TVMaze API (Primary for Series structure)
+// 3. TVMaze API (Series)
 const fetchSeriesFromTvMaze = async (query: string): Promise<SearchResult[]> => {
   try {
     const url = `https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, 3000);
     const data = await res.json();
 
     return data.map((item: any) => {
@@ -208,8 +248,8 @@ const fetchSeriesFromTvMaze = async (query: string): Promise<SearchResult[]> => 
 };
 
 // --- MAIN SEARCH FUNCTION ---
-// Aggregates raw data, prioritizes iTunes for Movies (better spanish), TVMaze for Series
 export const searchMedia = async (query: string): Promise<SearchResult[]> => {
+  // Run all in parallel, but handle individual failures gracefully so we don't block
   const [itunesMovies, cinemetaMovies, series] = await Promise.all([
     fetchMoviesFromItunes(query),
     fetchMoviesFromCinemaMeta(query),
@@ -218,23 +258,11 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
 
   const movieMap = new Map<string, SearchResult>();
   
-  // Strategy: 
-  // 1. Fill with CinemaMeta (Broad database)
-  // 2. Overwrite with iTunes (Better metadata/Spanish/Images)
-  
-  cinemetaMovies.forEach(m => {
-      movieMap.set(cleanTitle(m.title, m.year), m);
-  });
-
-  itunesMovies.forEach(m => {
-      const key = cleanTitle(m.title, m.year);
-      // iTunes is preferred, so we always set/overwrite
-      movieMap.set(key, m);
-  });
+  // Prioritize CinemaMeta then overwrite with iTunes
+  cinemetaMovies.forEach(m => movieMap.set(cleanTitle(m.title, m.year), m));
+  itunesMovies.forEach(m => movieMap.set(cleanTitle(m.title, m.year), m));
 
   const finalMovies = Array.from(movieMap.values());
-  
-  // Interleave results: Series first if query matches strictly? No, simple mix.
   const combined: SearchResult[] = [];
   const maxLen = Math.max(finalMovies.length, series.length);
   
@@ -247,7 +275,6 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
 };
 
 // --- API SERIES DETAILS ---
-// Fast structural fetch (No AI)
 export const getSeriesDetails = async (item: SearchResult): Promise<SearchResult> => {
   let enrichedItem = { ...item };
   
