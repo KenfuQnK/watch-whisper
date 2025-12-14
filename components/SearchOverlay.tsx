@@ -1,6 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { Search, Loader2, Plus, AlertCircle, Edit3, Film, Tv, X } from 'lucide-react';
-import { enrichInSpanish, rememberDiscardedResults, searchMedia } from '../services/gemini'; // Keeping filename but using new logic
+import { searchMedia } from '../services/gemini'; // Keeping filename but using new logic
 import { SearchResult, MediaType } from '../types';
 
 interface SearchOverlayProps {
@@ -26,25 +26,7 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
 
   if (!isOpen) return null;
 
-  const getMetadataScore = (result: SearchResult) => {
-    let score = 0;
-
-    const sourcePriority: Record<string, number> = {
-      itunes: 3,
-      cinemeta: 2,
-      tvmaze: 1,
-      manual: 0,
-    };
-
-    score += sourcePriority[result.source] || 0;
-    if (result.posterUrl) score += 2;
-    if (result.backupPosterUrl) score += 1;
-    if (result.description) score += Math.min(result.description.length / 80, 3);
-    if (result.year) score += 1;
-
-    return score;
-  };
-
+  // Búsqueda 100% basada en APIs externas (sin IA)
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -209,11 +191,29 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
                                         <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
                                             {result.description}
                                         </p>
+                                        {(result.enrichingTitle || result.enrichingDescription || result.enrichingTrailer) && (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {result.enrichingTitle && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-200 bg-indigo-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Enriqueciendo título
+                                                    </span>
+                                                )}
+                                                {result.enrichingDescription && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-sky-200 bg-sky-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Enriqueciendo descripción
+                                                    </span>
+                                                )}
+                                                {result.enrichingTrailer && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-200 bg-emerald-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Buscando tráiler
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                     <button
-                                        onClick={() => handleSelectResult(result)}
-                                        disabled={isEnriching}
-                                        className="mt-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all w-full disabled:opacity-60 disabled:cursor-not-allowed"
+                                        onClick={() => { onAdd(result); onClose(); resetState(); }}
+                                        className="mt-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all w-full"
                                     >
                                         {isEnriching ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />} Seleccionar
                                     </button>
