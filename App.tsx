@@ -209,7 +209,7 @@ const App: React.FC = () => {
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
-        
+
         // 4. Background Process: Fetch Trailer with AI (using Google Search now)
         fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id, newItem.source).then((trailerUrl) => {
             if (trailerUrl) {

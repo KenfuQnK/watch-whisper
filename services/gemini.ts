@@ -158,6 +158,56 @@ Año: ${item.year || ""}`;
   }
 };
 
+const validateTrailerUrl = (url: string) => YOUTUBE_REGEX.test(url);
+
+const extractUrlFromText = (text: string) => {
+    const urlMatch = text.match(/https?:\/\/[^\s]+/);
+    return urlMatch ? urlMatch[0] : "";
+};
+
+const extractUrlFromGrounding = (response: any) => {
+    const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+        for (const chunk of chunks) {
+            if (chunk.web?.uri && validateTrailerUrl(chunk.web.uri)) {
+                return chunk.web.uri;
+            }
+        }
+    }
+    return "";
+};
+
+const saveTrailerIfValid = async (itemId: string, title: string, candidate: string) => {
+    if (!candidate || !validateTrailerUrl(candidate)) return "";
+
+    console.log(`✅ Trailer validado para ${title}: ${candidate}`);
+    await updateMediaItem(itemId, { trailerUrl: candidate });
+    return candidate;
+};
+
+const proposeAlternativeTrailer = async (
+    ai: GoogleGenAI,
+    title: string,
+    year: string,
+    type: MediaType,
+    failedText: string
+) => {
+    const altPrompt = `The suggested trailer link for "${title}" (${year}) was not valid. Find a different, official YouTube trailer URL for this ${type}.
+Return ONLY the raw YouTube URL. Use Google Search tool to verify the link exists.`;
+
+    const altResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [altPrompt, failedText].filter(Boolean),
+        config: {
+            tools: [{ googleSearch: {} }]
+        }
+    });
+
+    const altText = altResponse.text || "";
+    const altCandidate = extractUrlFromText(altText) || extractUrlFromGrounding(altResponse);
+    return validateTrailerUrl(altCandidate) ? altCandidate : "";
+};
+
 // --- AI TRAILER SEARCH (Background Process) ---
 export const fetchTrailerInBackground = async (
     title: string,
@@ -229,6 +279,8 @@ export const fetchTrailerInBackground = async (
             }
             return "";
         }
+
+        return validTrailer;
 
     } catch (e) {
         console.warn("Gemini trailer search failed", e);

@@ -118,7 +118,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
             {item.type === MediaType.MOVIE ? 'Peli' : 'Serie'}
           </div>
         </span>
-        
+
         {/* Platform Badges (Mosaic limit to 2 + counter) */}
         {platforms.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -133,6 +133,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
                     </span>
                 )}
             </div>
+        )}
+
+        {item.trailerStatus === 'searching' && (
+            <span className="px-2 py-0.5 rounded text-[10px] font-semibold shadow-lg bg-amber-500 text-slate-900">
+                Buscando tráiler...
+            </span>
         )}
       </div>
 

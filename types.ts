@@ -57,7 +57,7 @@ export interface MediaItem {
   enrichmentError?: string;
 
   // Metadata for series structure
-  seasons?: SeasonData[]; 
+  seasons?: SeasonData[];
 
   // Map userId to their specific watch status
   userStatus: Record<string, WatchInfo>; 
