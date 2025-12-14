@@ -1,6 +1,5 @@
-
 import { SearchResult, MediaType, SeasonData, MediaItem } from "../types";
-import { GoogleGenAI, Schema, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { updateMediaItem } from "./db";
 
 // --- HELPERS ---
@@ -22,16 +21,8 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
 
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
-        // Definition of the expected output structure
-        const responseSchema: Schema = {
-            type: Type.OBJECT,
-            properties: {
-                spanishTitle: { type: Type.STRING, description: "The official title in Spanish (Spain). If same as original, keep it." },
-                spanishDescription: { type: Type.STRING, description: "A concise synopsis in Spanish (Spain). Max 3 sentences." },
-                trailerUrl: { type: Type.STRING, description: "A valid YouTube URL for the official trailer." },
-            },
-            required: ["spanishTitle", "spanishDescription", "trailerUrl"]
-        };
+        // NOTE: We cannot use 'responseMimeType: application/json' together with 'tools: googleSearch'
+        // in the current API version. We must ask for JSON in the prompt text.
 
         const prompt = `
         You are a cinema metadata expert for a Spanish audience.
@@ -40,9 +31,16 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
         
         Tasks:
         1. Provide the Title in Spanish (Spain).
-        2. Provide a Description in Spanish (Spain). If the current one is English, translate it naturally. If missing, generate one.
-        3. Use Google Search to find the OFFICIAL YouTube Trailer URL. Prefer Spanish subtitled or dubbed if available, otherwise English.
-        4. Ensure the trailer URL is a valid YouTube link (watch?v=...).
+        2. Provide a Description in Spanish (Spain). If the current one is English, translate it naturally.
+        3. Use Google Search to find the OFFICIAL YouTube Trailer URL. Prefer Spanish subtitled or dubbed if available.
+        
+        CRITICAL: Output your response ONLY as a raw JSON string (no markdown formatting like \`\`\`json).
+        Structure:
+        {
+            "spanishTitle": "string",
+            "spanishDescription": "string",
+            "trailerUrl": "string (valid youtube url)"
+        }
         `;
 
         const response = await ai.models.generateContent({
@@ -50,15 +48,23 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
             contents: prompt,
             config: {
                 tools: [{ googleSearch: {} }], // Use Grounding for Trailer
-                responseMimeType: "application/json",
-                responseSchema: responseSchema
+                // responseMimeType and responseSchema REMOVED to avoid conflict
             }
         });
 
-        const resultText = response.text;
+        let resultText = response.text;
         if (!resultText) return;
 
-        const result = JSON.parse(resultText);
+        // Cleanup: Sometimes the model adds markdown code blocks despite instructions
+        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+        let result;
+        try {
+            result = JSON.parse(resultText);
+        } catch (e) {
+            console.error("Failed to parse AI JSON response", resultText);
+            return;
+        }
 
         // Validation & Merge Logic
         const updates: Partial<MediaItem> = { isEnriched: true };
