@@ -1,19 +1,12 @@
 import React, { useState } from 'react';
 import { MediaItem, User, MediaType } from '../types';
 import Avatar from './Avatar';
-import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star, Sparkles } from 'lucide-react';
-
-const AI_FIELD_LABELS: Record<keyof MediaItem['source'], string> = {
-  title: 'Título',
-  description: 'Descripción',
-  trailer: 'Trailer',
-};
+import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star } from 'lucide-react';
 
 interface MediaCardProps {
   item: MediaItem;
   users: User[];
   onClick: (item: MediaItem) => void;
-  onRetryEnrichment?: (item: MediaItem) => void;
 }
 
 const getPlatformColor = (p: string) => {
@@ -31,7 +24,7 @@ const getPlatformColor = (p: string) => {
     }
 }
 
-const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnrichment }) => {
+const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
   // 0 = primary, 1 = backup, 2 = text fallback
   const [imageState, setImageState] = useState<0 | 1 | 2>(0);
 
@@ -50,12 +43,6 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
       if (item.type === MediaType.SERIES) return status.watchedEpisodes && status.watchedEpisodes.length > 0;
       return false;
   });
-
-  const enrichmentLabels = [
-    item.enrichingTitle && 'Enriqueciendo título',
-    item.enrichingDescription && 'Enriqueciendo descripción',
-    item.enrichingTrailer && 'Buscando tráiler'
-  ].filter(Boolean) as string[];
 
   const percent = users.length > 0 ? (usersWithActivity.length / users.length) * 100 : 0;
   const isFullyWatched = usersWithActivity.length === users.length;
@@ -76,12 +63,9 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
 
   // Safe Platform Access (ensure array)
   const platforms = Array.isArray(item.platform) ? item.platform : (item.platform ? [item.platform] : []);
-  const aiFields = Object.entries(item.source || {})
-    .filter(([, value]) => value === 'ai')
-    .map(([key]) => AI_FIELD_LABELS[key as keyof MediaItem['source']]);
 
   return (
-    <div
+    <div 
       onClick={() => onClick(item)}
       className="group relative flex flex-col bg-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 cursor-pointer w-full aspect-[2/3]"
     >
@@ -118,7 +102,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
             {item.type === MediaType.MOVIE ? 'Peli' : 'Serie'}
           </div>
         </span>
-
+        
         {/* Platform Badges (Mosaic limit to 2 + counter) */}
         {platforms.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -133,12 +117,6 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
                     </span>
                 )}
             </div>
-        )}
-
-        {item.trailerStatus === 'searching' && (
-            <span className="px-2 py-0.5 rounded text-[10px] font-semibold shadow-lg bg-amber-500 text-slate-900">
-                Buscando tráiler...
-            </span>
         )}
       </div>
 
@@ -169,25 +147,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnri
         
         {/* Activity Indicator */}
         <div className="w-full h-1 bg-slate-700 rounded-full overflow-hidden mt-2">
-           <div
+           <div 
             className={`h-full ${isFullyWatched ? 'bg-green-500' : 'bg-blue-500'} transition-all duration-500`}
             style={{ width: `${percent}%` }}
            />
         </div>
       </div>
-
-      {/* AI Source Indicator */}
-      {aiFields.length > 0 && (
-        <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          <div
-            className="flex items-center gap-1 text-amber-200 bg-slate-900/80 px-2 py-1 rounded-full text-[11px] border border-amber-300/30"
-            title={`Datos generados por IA: ${aiFields.join(', ')}`}
-          >
-            <Sparkles size={14} />
-            <span>IA</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

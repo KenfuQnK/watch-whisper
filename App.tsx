@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground, enrichInSpanish, postProcessMediaData } from './services/gemini';
+import { getSeriesDetails, enrichMediaContent } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -29,10 +29,9 @@ const App: React.FC = () => {
   // Modal States
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-
+  
   // File Input Ref for Import
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const enrichmentInFlight = useRef<Set<string>>(new Set());
 
   // --- SUPABASE INITIALIZATION & REALTIME ---
   useEffect(() => {
@@ -101,8 +100,6 @@ const App: React.FC = () => {
       return { startedCount, finishedCount };
   };
 
-  const defaultSource = useMemo(() => ({ title: 'api', description: 'api', trailer: 'api' as const }), []);
-
   // --- FILTERING LOGIC ---
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -150,26 +147,16 @@ const App: React.FC = () => {
       return { pending, inprogress, finished };
   }, [items]);
 
-  const applyItemChanges = (itemId: string, changes: Partial<MediaItem>) => {
-      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
-      if (selectedItem?.id === itemId) {
-          setSelectedItem(prev => prev ? { ...prev, ...changes } : prev);
-      }
-
-      return updateMediaItem(itemId, changes);
-  };
-
   const handleAddItem = async (result: SearchResult) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) {
         alert("¡Ya tienes esto en tu lista!");
         return;
     }
     
-    // 1. Prepare basic item data immediately (Optimistic UI)
-    // We only wait for series details (episodes) if needed, but we don't wait for AI trailer
+    // --- STEP 1: Fast API Enrichment (Non-AI) ---
+    // Get episodes structure for series
     let finalResult = result;
     if (result.type === MediaType.SERIES) {
-        // Fetch episodes quickly (usually fast API)
         try {
              finalResult = await getSeriesDetails(result);
         } catch(e) {
@@ -177,153 +164,55 @@ const App: React.FC = () => {
         }
     }
 
-    // Apply AI post-processing ONLY when core fields are missing
-    try {
-      finalResult = await postProcessMediaData(finalResult);
-    } catch (e) {
-      console.warn("Post-processing skipped due to error", e);
-    }
-
     const newItem: MediaItem = {
         id: Date.now().toString(),
-        ...finalResult, // Contains basic info + episodes
+        ...finalResult, 
         collectionId: CollectionType.WATCHLIST,
         addedAt: Date.now(),
-        source: { ...defaultSource },
         userStatus: {},
         seasons: finalResult.seasons || [],
-        platform: [],
+        platform: [], 
         releaseDate: '',
         rating: 0,
-        trailerUrl: '', // Empty initially to be fast
-        enrichingDescription: shouldEnrichDescription,
-        enrichingTitle: shouldEnrichTitle,
-        enrichingTrailer: true,
+        trailerUrl: '', 
+        isEnriched: false // Flag to trigger AI background process
     };
 
-    enrichmentInFlight.current.add(newItem.id);
-
-    // 2. Update UI Immediately (Add to list)
+    // --- STEP 2: Optimistic UI & DB Save ---
     setItems(prev => [newItem, ...prev]);
-
-    // 3. Save to DB Immediately
+    
     try {
         await addMediaItem(newItem);
-
-        // 4. Background Process: Fetch Trailer with AI (using Google Search now)
-        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id, newItem.source).then((trailerUrl) => {
-            if (trailerUrl) {
-                // FORCE UPDATE LOCAL STATE when promise resolves
-                // This ensures the user sees the "Play Trailer" button appear on the card instantly
-                setItems(currentItems =>
-                    currentItems.map(item =>
-                        item.id === newItem.id ? { ...item, trailerUrl } : item
-                    )
-                );
-            }
-        });
-
-        // 5. Background Process: Translate metadata to Spanish if needed
-        enrichInSpanish(newItem).then((translated) => {
-            if (translated) {
-                setItems(currentItems =>
-                    currentItems.map(item =>
-                        item.id === newItem.id ? { ...item, ...translated } : item
-                    )
-                );
-                updateMediaItem(newItem.id, translated);
-            }
+        
+        // --- STEP 3: AI Background Enrichment ---
+        // Fire and forget - The component will update via Supabase subscription 
+        // when this async function finishes updating the DB row.
+        enrichMediaContent(newItem).then(() => {
+            console.log("Background enrichment completed for:", newItem.title);
         });
 
     } catch (e) {
         console.error("Error adding item to DB", e);
-        // Rollback optimistic update if critical fail
         setItems(prev => prev.filter(i => i.id !== newItem.id));
-        enrichmentInFlight.current.delete(newItem.id);
         alert("Error al guardar en la base de datos.");
     }
   };
 
   // Generic Update Handler
   const handleUpdateItem = async (itemId: string, changes: Partial<MediaItem>) => {
-      await applyItemChanges(itemId, changes);
-  };
-
-  const runBackgroundEnrichment = (item: MediaItem): Promise<void> => {
-      const tasks: Promise<void>[] = [];
-      const shouldEnrichText = item.enrichingDescription || false;
-      const shouldEnrichTitle = item.enrichingTitle || false;
-
-      if (shouldEnrichText || shouldEnrichTitle) {
-          const textTask = searchMedia(item.title)
-            .then(results => {
-                const matched = results.find(r => r.type === item.type && (item.year ? r.year === item.year : true)) || results[0];
-                const updates: Partial<MediaItem> = {
-                    enrichingDescription: false,
-                    enrichingTitle: false,
-                };
-
-                if (matched) {
-                    if (shouldEnrichText && matched.description) updates.description = matched.description;
-                    if (shouldEnrichTitle && matched.title) updates.title = matched.title;
-                    if (!item.posterUrl && matched.posterUrl) updates.posterUrl = matched.posterUrl;
-                    if (!item.backupPosterUrl && matched.backupPosterUrl) updates.backupPosterUrl = matched.backupPosterUrl;
-                    if (!item.trailerUrl && matched.trailerUrl) updates.trailerUrl = matched.trailerUrl;
-                }
-
-                applyItemChanges(item.id, updates);
-            })
-            .catch(() => {
-                applyItemChanges(item.id, {
-                    enrichingDescription: false,
-                    enrichingTitle: false,
-                });
-            });
-
-          tasks.push(textTask);
+      // Optimistic Update
+      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
+      if (selectedItem && selectedItem.id === itemId) {
+          setSelectedItem(prev => prev ? { ...prev, ...changes } : null);
       }
-
-      const shouldEnrichTrailer = item.enrichingTrailer || !item.trailerUrl;
-      if (shouldEnrichTrailer) {
-          const trailerTask = fetchTrailerInBackground(item.title, item.year || '', item.type)
-            .then(trailerUrl => {
-                const trailerUpdate: Partial<MediaItem> = { enrichingTrailer: false };
-                if (trailerUrl) trailerUpdate.trailerUrl = trailerUrl;
-                applyItemChanges(item.id, trailerUpdate);
-            })
-            .catch(() => {
-                applyItemChanges(item.id, { enrichingTrailer: false });
-            });
-
-          tasks.push(trailerTask);
-      }
-
-      if (tasks.length === 0) return Promise.resolve();
-      return Promise.all(tasks).then(() => undefined);
+      
+      // DB Update
+      await updateMediaItem(itemId, changes);
   };
-
-  useEffect(() => {
-      items.forEach(item => {
-          const needsEnrichment = item.enrichingDescription || item.enrichingTitle || item.enrichingTrailer;
-          if (needsEnrichment && !enrichmentInFlight.current.has(item.id)) {
-              enrichmentInFlight.current.add(item.id);
-              runBackgroundEnrichment(item).finally(() => {
-                  enrichmentInFlight.current.delete(item.id);
-              });
-          }
-      });
-  }, [items]);
 
   const handleDelete = async (itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
     await deleteMediaItem(itemId);
-  };
-
-  const handleRetryEnrichment = (itemId: string) => {
-    const targetItem = items.find(i => i.id === itemId);
-    if (targetItem) {
-      runEnrichmentJobs(targetItem);
-    }
   };
 
   // --- IMPORT/EXPORT ---
@@ -460,12 +349,11 @@ const App: React.FC = () => {
         ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
             {filteredItems.map(item => (
-                <MediaCard
-                    key={item.id}
-                    item={item}
+                <MediaCard 
+                    key={item.id} 
+                    item={item} 
                     users={USERS}
-                    onClick={(i) => setSelectedItem(i)}
-                    onRetryEnrichment={() => handleRetryEnrichment(item.id)}
+                    onClick={(i) => setSelectedItem(i)} 
                 />
             ))}
             </div>

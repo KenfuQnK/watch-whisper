@@ -170,8 +170,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({
   };
 
   const handleSaveTrailer = () => {
-      if (!localItem) return;
-      updateLocalItem({ trailerUrl: trailerInput, source: { ...localItem.source, trailer: 'api' } });
+      updateLocalItem({ trailerUrl: trailerInput });
       setIsEditingTrailer(false);
       if (trailerInput && getYoutubeEmbedUrl(trailerInput)) {
           setIsPlayingTrailer(true);

@@ -1,3 +1,4 @@
+
 export enum MediaType {
   MOVIE = 'movie',
   SERIES = 'series',
@@ -34,30 +35,26 @@ export interface WatchInfo {
 export interface MediaItem {
   id: string;
   title: string;
+  originalTitle?: string; // To keep the English/Original name if we translate
   type: MediaType;
-  source?: 'tvmaze' | 'itunes' | 'cinemeta' | 'manual';
   posterUrl: string;
   backupPosterUrl?: string; // Second chance image
   description: string;
   year?: string;
   addedAt: number;
   collectionId: CollectionType;
-  source: {
-    title: 'api' | 'ai';
-    description: 'api' | 'ai';
-    trailer: 'api' | 'ai';
-  };
   
   // New Fields
   platform?: string[]; // Changed from Platform (single string) to string array
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
   trailerUrl?: string; // YouTube URL
-  enrichmentStatus?: 'pending' | 'complete' | 'failed';
-  enrichmentError?: string;
+  
+  // AI Metadata
+  isEnriched?: boolean; // True if AI has already processed this item
 
   // Metadata for series structure
-  seasons?: SeasonData[];
+  seasons?: SeasonData[]; 
 
   // Map userId to their specific watch status
   userStatus: Record<string, WatchInfo>; 
@@ -73,9 +70,6 @@ export interface SearchResult {
   description: string;
   posterUrl: string;
   backupPosterUrl?: string;
-  seasons?: SeasonData[];
+  seasons?: SeasonData[]; 
   trailerUrl?: string;
-  enrichingTitle?: boolean;
-  enrichingDescription?: boolean;
-  enrichingTrailer?: boolean;
 }
