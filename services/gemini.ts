@@ -75,50 +75,6 @@ export const enrichInSpanish = async (
     }
 
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const prompt = `Detecta el idioma del siguiente contenido. Si no es español, traduce el título y la sinopsis a español neutro. 
-    Devuelve siempre un JSON con la forma { "language": "<codigo>", "title": "<titulo_es>", "description": "<sinopsis_es>" } sin texto adicional.
-    Título: "${item.title}"
-    Sinopsis: "${item.description}"
-    Tipo: ${item.type}
-    Año: ${item.year || ""}`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      generationConfig: {
-        responseMimeType: "application/json"
-      }
-    });
-
-    const raw = response.text || "";
-    const parsed = JSON.parse(raw);
-    const detectedLang = (parsed.language || "").toString().toLowerCase();
-
-    if (detectedLang === "es") {
-      return null;
-    }
-
-    const translatedTitle = parsed.title || item.title;
-    const translatedDescription = parsed.description || item.description;
-
-    return { title: translatedTitle, description: translatedDescription };
-  } catch (e) {
-    console.warn("Gemini translation failed", e);
-    return null;
-  }
-};
-
-// Detect language and translate to Spanish when needed
-export const enrichInSpanish = async (
-  item: Pick<SearchResult, "title" | "description" | "type" | "year"> & { id: string }
-): Promise<{ title: string; description: string } | null> => {
-  try {
-    if (!process.env.API_KEY) {
-      console.warn("No API_KEY found for Gemini translation");
-      return null;
-    }
-
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const prompt = `Detecta el idioma del siguiente contenido. Si no es español, traduce el título y la sinopsis a español neutro.
 Devuelve un JSON exacto con la forma { "language": "<codigo>", "title": "<titulo_es>", "description": "<sinopsis_es>" } sin comentario adicional.
 Título: "${item.title}"

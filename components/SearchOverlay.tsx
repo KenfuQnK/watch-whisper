@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Search, Loader2, Plus, AlertCircle, Edit3, Film, Tv, X } from 'lucide-react';
 import { searchMedia } from '../services/gemini'; // Keeping filename but using new logic
 import { SearchResult, MediaType } from '../types';
