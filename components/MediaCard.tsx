@@ -50,6 +50,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
       return false;
   });
 
+  const enrichmentLabels = [
+    item.enrichingTitle && 'Enriqueciendo título',
+    item.enrichingDescription && 'Enriqueciendo descripción',
+    item.enrichingTrailer && 'Buscando tráiler'
+  ].filter(Boolean) as string[];
+
   const percent = users.length > 0 ? (usersWithActivity.length / users.length) * 100 : 0;
   const isFullyWatched = usersWithActivity.length === users.length;
 

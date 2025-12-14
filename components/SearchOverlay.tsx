@@ -166,8 +166,27 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
                                         <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
                                             {result.description}
                                         </p>
+                                        {(result.enrichingTitle || result.enrichingDescription || result.enrichingTrailer) && (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {result.enrichingTitle && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-200 bg-indigo-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Enriqueciendo título
+                                                    </span>
+                                                )}
+                                                {result.enrichingDescription && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-sky-200 bg-sky-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Enriqueciendo descripción
+                                                    </span>
+                                                )}
+                                                {result.enrichingTrailer && (
+                                                    <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-200 bg-emerald-500/20 px-2 py-1 rounded-full">
+                                                        <Loader2 size={12} className="animate-spin" /> Buscando tráiler
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
-                                    <button 
+                                    <button
                                         onClick={() => { onAdd(result); onClose(); resetState(); }}
                                         className="mt-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all w-full"
                                     >

@@ -29,9 +29,10 @@ const App: React.FC = () => {
   // Modal States
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  
+
   // File Input Ref for Import
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const enrichmentInFlight = useRef<Set<string>>(new Set());
 
   // --- SUPABASE INITIALIZATION & REALTIME ---
   useEffect(() => {
@@ -149,6 +150,15 @@ const App: React.FC = () => {
       return { pending, inprogress, finished };
   }, [items]);
 
+  const applyItemChanges = (itemId: string, changes: Partial<MediaItem>) => {
+      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
+      if (selectedItem?.id === itemId) {
+          setSelectedItem(prev => prev ? { ...prev, ...changes } : prev);
+      }
+
+      return updateMediaItem(itemId, changes);
+  };
+
   const handleAddItem = async (result: SearchResult) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) {
         alert("¡Ya tienes esto en tu lista!");
@@ -186,11 +196,16 @@ const App: React.FC = () => {
         releaseDate: '',
         rating: 0,
         trailerUrl: '', // Empty initially to be fast
+        enrichingDescription: shouldEnrichDescription,
+        enrichingTitle: shouldEnrichTitle,
+        enrichingTrailer: true,
     };
+
+    enrichmentInFlight.current.add(newItem.id);
 
     // 2. Update UI Immediately (Add to list)
     setItems(prev => [newItem, ...prev]);
-    
+
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
@@ -224,21 +239,80 @@ const App: React.FC = () => {
         console.error("Error adding item to DB", e);
         // Rollback optimistic update if critical fail
         setItems(prev => prev.filter(i => i.id !== newItem.id));
+        enrichmentInFlight.current.delete(newItem.id);
         alert("Error al guardar en la base de datos.");
     }
   };
 
   // Generic Update Handler
   const handleUpdateItem = async (itemId: string, changes: Partial<MediaItem>) => {
-      // Optimistic Update
-      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
-      if (selectedItem && selectedItem.id === itemId) {
-          setSelectedItem(prev => prev ? { ...prev, ...changes } : null);
-      }
-      
-      // DB Update
-      await updateMediaItem(itemId, changes);
+      await applyItemChanges(itemId, changes);
   };
+
+  const runBackgroundEnrichment = (item: MediaItem): Promise<void> => {
+      const tasks: Promise<void>[] = [];
+      const shouldEnrichText = item.enrichingDescription || false;
+      const shouldEnrichTitle = item.enrichingTitle || false;
+
+      if (shouldEnrichText || shouldEnrichTitle) {
+          const textTask = searchMedia(item.title)
+            .then(results => {
+                const matched = results.find(r => r.type === item.type && (item.year ? r.year === item.year : true)) || results[0];
+                const updates: Partial<MediaItem> = {
+                    enrichingDescription: false,
+                    enrichingTitle: false,
+                };
+
+                if (matched) {
+                    if (shouldEnrichText && matched.description) updates.description = matched.description;
+                    if (shouldEnrichTitle && matched.title) updates.title = matched.title;
+                    if (!item.posterUrl && matched.posterUrl) updates.posterUrl = matched.posterUrl;
+                    if (!item.backupPosterUrl && matched.backupPosterUrl) updates.backupPosterUrl = matched.backupPosterUrl;
+                    if (!item.trailerUrl && matched.trailerUrl) updates.trailerUrl = matched.trailerUrl;
+                }
+
+                applyItemChanges(item.id, updates);
+            })
+            .catch(() => {
+                applyItemChanges(item.id, {
+                    enrichingDescription: false,
+                    enrichingTitle: false,
+                });
+            });
+
+          tasks.push(textTask);
+      }
+
+      const shouldEnrichTrailer = item.enrichingTrailer || !item.trailerUrl;
+      if (shouldEnrichTrailer) {
+          const trailerTask = fetchTrailerInBackground(item.title, item.year || '', item.type)
+            .then(trailerUrl => {
+                const trailerUpdate: Partial<MediaItem> = { enrichingTrailer: false };
+                if (trailerUrl) trailerUpdate.trailerUrl = trailerUrl;
+                applyItemChanges(item.id, trailerUpdate);
+            })
+            .catch(() => {
+                applyItemChanges(item.id, { enrichingTrailer: false });
+            });
+
+          tasks.push(trailerTask);
+      }
+
+      if (tasks.length === 0) return Promise.resolve();
+      return Promise.all(tasks).then(() => undefined);
+  };
+
+  useEffect(() => {
+      items.forEach(item => {
+          const needsEnrichment = item.enrichingDescription || item.enrichingTitle || item.enrichingTrailer;
+          if (needsEnrichment && !enrichmentInFlight.current.has(item.id)) {
+              enrichmentInFlight.current.add(item.id);
+              runBackgroundEnrichment(item).finally(() => {
+                  enrichmentInFlight.current.delete(item.id);
+              });
+          }
+      });
+  }, [items]);
 
   const handleDelete = async (itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));

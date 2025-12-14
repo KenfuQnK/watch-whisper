@@ -110,7 +110,10 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.posterUrl !== undefined) dbChanges.poster_url = changes.posterUrl;
   if (changes.backupPosterUrl !== undefined) dbChanges.backup_poster_url = changes.backupPosterUrl;
   if (changes.description !== undefined) dbChanges.description = changes.description;
-  
+  if (changes.enrichingTitle !== undefined) dbChanges.enriching_title = changes.enrichingTitle;
+  if (changes.enrichingDescription !== undefined) dbChanges.enriching_description = changes.enrichingDescription;
+  if (changes.enrichingTrailer !== undefined) dbChanges.enriching_trailer = changes.enrichingTrailer;
+
   if (changes.platform !== undefined) {
       dbChanges.platform = Array.isArray(changes.platform) ? changes.platform.join(',') : changes.platform;
   }
