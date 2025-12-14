@@ -13,6 +13,7 @@ interface MediaCardProps {
   item: MediaItem;
   users: User[];
   onClick: (item: MediaItem) => void;
+  onRetryEnrichment?: (item: MediaItem) => void;
 }
 
 const getPlatformColor = (p: string) => {
@@ -30,7 +31,7 @@ const getPlatformColor = (p: string) => {
     }
 }
 
-const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
+const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnrichment }) => {
   // 0 = primary, 1 = backup, 2 = text fallback
   const [imageState, setImageState] = useState<0 | 1 | 2>(0);
 

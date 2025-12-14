@@ -319,6 +319,13 @@ const App: React.FC = () => {
     await deleteMediaItem(itemId);
   };
 
+  const handleRetryEnrichment = (itemId: string) => {
+    const targetItem = items.find(i => i.id === itemId);
+    if (targetItem) {
+      runEnrichmentJobs(targetItem);
+    }
+  };
+
   // --- IMPORT/EXPORT ---
   const handleExport = () => {
     const dataStr = JSON.stringify(items, null, 2);
@@ -453,11 +460,12 @@ const App: React.FC = () => {
         ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
             {filteredItems.map(item => (
-                <MediaCard 
-                    key={item.id} 
-                    item={item} 
+                <MediaCard
+                    key={item.id}
+                    item={item}
                     users={USERS}
-                    onClick={(i) => setSelectedItem(i)} 
+                    onClick={(i) => setSelectedItem(i)}
+                    onRetryEnrichment={() => handleRetryEnrichment(item.id)}
                 />
             ))}
             </div>
