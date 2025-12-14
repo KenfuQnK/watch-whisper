@@ -4,6 +4,10 @@ import { updateMediaItem } from "./db";
 
 // --- HELPERS ---
 const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim()}-${year}`;
+const buildCacheKey = (item: SearchResult) => `${item.source}-${item.externalId}`;
+
+const enrichmentCache = new Map<string, SearchResult>();
+const discardedCache = new Set<string>();
 
 // Regex to validate real YouTube URLs (prevents AI hallucinations)
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
@@ -187,6 +191,34 @@ export const searchMedia = async (query: string): Promise<SearchResult[]> => {
   }
   
   return combined;
+};
+
+// --- ENRICHMENT HELPERS ---
+export const rememberDiscardedResults = (results: SearchResult[]) => {
+  results.forEach((result) => discardedCache.add(buildCacheKey(result)));
+};
+
+export const enrichInSpanish = async (item: SearchResult): Promise<SearchResult> => {
+  const cacheKey = buildCacheKey(item);
+
+  if (discardedCache.has(cacheKey)) {
+    return item;
+  }
+
+  const cached = enrichmentCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  // Basic enrichment: prefer backup posters and keep description always populated.
+  const enriched: SearchResult = {
+    ...item,
+    posterUrl: item.posterUrl || item.backupPosterUrl || '',
+    description: item.description || 'Sin descripción disponible.',
+  };
+
+  enrichmentCache.set(cacheKey, enriched);
+  return enriched;
 };
 
 // --- ENRICHMENT FUNCTION ---
