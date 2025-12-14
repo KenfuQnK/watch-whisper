@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, enrichInSpanish } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -190,11 +190,23 @@ const App: React.FC = () => {
             if (trailerUrl) {
                 // FORCE UPDATE LOCAL STATE when promise resolves
                 // This ensures the user sees the "Play Trailer" button appear on the card instantly
-                setItems(currentItems => 
-                    currentItems.map(item => 
+                setItems(currentItems =>
+                    currentItems.map(item =>
                         item.id === newItem.id ? { ...item, trailerUrl } : item
                     )
                 );
+            }
+        });
+
+        // 5. Background Process: Translate metadata to Spanish if needed
+        enrichInSpanish(newItem).then((translated) => {
+            if (translated) {
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, ...translated } : item
+                    )
+                );
+                updateMediaItem(newItem.id, translated);
             }
         });
 
