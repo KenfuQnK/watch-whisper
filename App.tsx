@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, translateDescriptionInBackground } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -147,6 +147,43 @@ const App: React.FC = () => {
       return { pending, inprogress, finished };
   }, [items]);
 
+  const runEnrichmentJobs = async (item: MediaItem) => {
+    // Optimistically mark as pending
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, enrichmentStatus: 'pending', enrichmentError: undefined } : i));
+
+    try {
+      const [translatedDescription, trailerUrl] = await Promise.all([
+        translateDescriptionInBackground(item.title, item.description),
+        fetchTrailerInBackground(item.title, item.year || '', item.type, item.id)
+      ]);
+
+      const updates: Partial<MediaItem> = {};
+      const dbChanges: Partial<MediaItem> = {};
+
+      if (translatedDescription && translatedDescription !== item.description) {
+        updates.description = translatedDescription;
+        dbChanges.description = translatedDescription;
+      }
+
+      if (trailerUrl) {
+        updates.trailerUrl = trailerUrl;
+      }
+
+      const isSuccess = translatedDescription || trailerUrl;
+      updates.enrichmentStatus = isSuccess ? 'complete' : 'failed';
+      updates.enrichmentError = isSuccess ? undefined : 'No se pudo enriquecer el título automáticamente.';
+
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, ...updates } : i));
+
+      if (Object.keys(dbChanges).length > 0) {
+        await updateMediaItem(item.id, dbChanges);
+      }
+    } catch (error) {
+      console.error('Error running enrichment jobs', error);
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, enrichmentStatus: 'failed', enrichmentError: 'Falló el enriquecimiento automático.' } : i));
+    }
+  };
+
   const handleAddItem = async (result: SearchResult) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) {
         alert("¡Ya tienes esto en tu lista!");
@@ -172,10 +209,11 @@ const App: React.FC = () => {
         addedAt: Date.now(),
         userStatus: {},
         seasons: finalResult.seasons || [],
-        platform: [], 
+        platform: [],
         releaseDate: '',
         rating: 0,
         trailerUrl: '', // Empty initially to be fast
+        enrichmentStatus: 'pending',
     };
 
     // 2. Update UI Immediately (Add to list)
@@ -184,19 +222,7 @@ const App: React.FC = () => {
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
-        
-        // 4. Background Process: Fetch Trailer with AI (using Google Search now)
-        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id).then((trailerUrl) => {
-            if (trailerUrl) {
-                // FORCE UPDATE LOCAL STATE when promise resolves
-                // This ensures the user sees the "Play Trailer" button appear on the card instantly
-                setItems(currentItems => 
-                    currentItems.map(item => 
-                        item.id === newItem.id ? { ...item, trailerUrl } : item
-                    )
-                );
-            }
-        });
+        runEnrichmentJobs(newItem);
 
     } catch (e) {
         console.error("Error adding item to DB", e);
@@ -221,6 +247,13 @@ const App: React.FC = () => {
   const handleDelete = async (itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
     await deleteMediaItem(itemId);
+  };
+
+  const handleRetryEnrichment = (itemId: string) => {
+    const targetItem = items.find(i => i.id === itemId);
+    if (targetItem) {
+      runEnrichmentJobs(targetItem);
+    }
   };
 
   // --- IMPORT/EXPORT ---
@@ -357,11 +390,12 @@ const App: React.FC = () => {
         ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
             {filteredItems.map(item => (
-                <MediaCard 
-                    key={item.id} 
-                    item={item} 
+                <MediaCard
+                    key={item.id}
+                    item={item}
                     users={USERS}
-                    onClick={(i) => setSelectedItem(i)} 
+                    onClick={(i) => setSelectedItem(i)}
+                    onRetryEnrichment={() => handleRetryEnrichment(item.id)}
                 />
             ))}
             </div>

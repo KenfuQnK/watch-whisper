@@ -7,6 +7,7 @@ interface MediaCardProps {
   item: MediaItem;
   users: User[];
   onClick: (item: MediaItem) => void;
+  onRetryEnrichment?: (item: MediaItem) => void;
 }
 
 const getPlatformColor = (p: string) => {
@@ -24,7 +25,7 @@ const getPlatformColor = (p: string) => {
     }
 }
 
-const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
+const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick, onRetryEnrichment }) => {
   // 0 = primary, 1 = backup, 2 = text fallback
   const [imageState, setImageState] = useState<0 | 1 | 2>(0);
 
@@ -153,6 +154,17 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
            />
         </div>
       </div>
+
+      {item.enrichmentStatus === 'failed' && onRetryEnrichment && (
+        <div className="absolute inset-x-2 bottom-2 z-20">
+          <button
+            onClick={(e) => { e.stopPropagation(); onRetryEnrichment(item); }}
+            className="w-full text-xs font-bold bg-red-600 text-white rounded-lg px-3 py-2 shadow-lg hover:bg-red-500 transition-colors"
+          >
+            Reintentar enriquecimiento
+          </button>
+        </div>
+      )}
     </div>
   );
 };

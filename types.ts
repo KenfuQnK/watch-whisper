@@ -47,6 +47,8 @@ export interface MediaItem {
   releaseDate?: string; // YYYY-MM-DD
   rating?: number; // 1 (Bad), 2 (Good), 3 (Amazing/DoubleThumbs), 4 (Masterpiece/Star)
   trailerUrl?: string; // YouTube URL
+  enrichmentStatus?: 'pending' | 'complete' | 'failed';
+  enrichmentError?: string;
 
   // Metadata for series structure
   seasons?: SeasonData[]; 
