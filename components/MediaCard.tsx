@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { MediaItem, User, MediaType } from '../types';
 import Avatar from './Avatar';
-import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star, Loader2 } from 'lucide-react';
+import { Film, Tv, Calendar, ThumbsUp, ThumbsDown, Star, Sparkles } from 'lucide-react';
+
+const AI_FIELD_LABELS: Record<keyof MediaItem['source'], string> = {
+  title: 'Título',
+  description: 'Descripción',
+  trailer: 'Trailer',
+};
 
 interface MediaCardProps {
   item: MediaItem;
@@ -69,9 +75,12 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
 
   // Safe Platform Access (ensure array)
   const platforms = Array.isArray(item.platform) ? item.platform : (item.platform ? [item.platform] : []);
+  const aiFields = Object.entries(item.source || {})
+    .filter(([, value]) => value === 'ai')
+    .map(([key]) => AI_FIELD_LABELS[key as keyof MediaItem['source']]);
 
   return (
-    <div 
+    <div
       onClick={() => onClick(item)}
       className="group relative flex flex-col bg-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 cursor-pointer w-full aspect-[2/3]"
     >
@@ -153,21 +162,23 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, users, onClick }) => {
         
         {/* Activity Indicator */}
         <div className="w-full h-1 bg-slate-700 rounded-full overflow-hidden mt-2">
-           <div 
-          className={`h-full ${isFullyWatched ? 'bg-green-500' : 'bg-blue-500'} transition-all duration-500`}
-          style={{ width: `${percent}%` }}
-         />
+           <div
+            className={`h-full ${isFullyWatched ? 'bg-green-500' : 'bg-blue-500'} transition-all duration-500`}
+            style={{ width: `${percent}%` }}
+           />
         </div>
       </div>
 
-      {enrichmentLabels.length > 0 && (
-        <div className="absolute inset-x-3 bottom-3 z-20 flex flex-col gap-2">
-            {enrichmentLabels.map(label => (
-                <div key={label} className="flex items-center gap-2 bg-slate-900/80 text-indigo-100 text-xs font-semibold rounded-lg px-2 py-1 shadow-lg">
-                    <Loader2 size={14} className="animate-spin" />
-                    {label}
-                </div>
-            ))}
+      {/* AI Source Indicator */}
+      {aiFields.length > 0 && (
+        <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          <div
+            className="flex items-center gap-1 text-amber-200 bg-slate-900/80 px-2 py-1 rounded-full text-[11px] border border-amber-300/30"
+            title={`Datos generados por IA: ${aiFields.join(', ')}`}
+          >
+            <Sparkles size={14} />
+            <span>IA</span>
+          </div>
         </div>
       )}
     </div>

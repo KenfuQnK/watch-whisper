@@ -1,5 +1,28 @@
 import { supabase } from '../lib/supabase';
-import { MediaItem } from '../types';
+import { MediaItem, MediaType } from '../types';
+
+// --- AI RESULT CACHE ---
+// Stores translation/trailer results keyed by (title, year, type)
+const aiResultCache = new Map<string, Partial<Pick<MediaItem, 'trailerUrl' | 'description'>>>();
+
+const buildAiCacheKey = (title: string, year?: string, type?: MediaType) =>
+  `${title.toLowerCase().trim()}|${year || ''}|${type || ''}`;
+
+export const getAiCache = (title: string, year?: string, type?: MediaType) => {
+  const key = buildAiCacheKey(title, year, type);
+  return aiResultCache.get(key);
+};
+
+export const setAiCache = (
+  title: string,
+  year: string | undefined,
+  type: MediaType | undefined,
+  data: Partial<Pick<MediaItem, 'trailerUrl' | 'description'>>
+) => {
+  const key = buildAiCacheKey(title, year, type);
+  const prev = aiResultCache.get(key) || {};
+  aiResultCache.set(key, { ...prev, ...data });
+};
 
 // --- MAPPING HELPERS ---
 // Translates between App types (camelCase) and DB columns (snake_case)
@@ -24,9 +47,7 @@ const mapFromDb = (row: any): MediaItem => {
     year: row.year,
     addedAt: parseInt(row.added_at), // BigInt comes as string sometimes from JSON
     collectionId: row.collection_id,
-    enrichingTitle: row.enriching_title,
-    enrichingDescription: row.enriching_description,
-    enrichingTrailer: row.enriching_trailer,
+    source: row.source || { title: 'api', description: 'api', trailer: 'api' },
     platform: platforms,
     releaseDate: row.release_date,
     rating: row.rating,
@@ -50,9 +71,7 @@ const mapToDb = (item: MediaItem) => {
     year: item.year,
     added_at: item.addedAt,
     collection_id: item.collectionId,
-    enriching_title: item.enrichingTitle,
-    enriching_description: item.enrichingDescription,
-    enriching_trailer: item.enrichingTrailer,
+    source: item.source,
     platform: platformStr,
     release_date: item.releaseDate,
     rating: item.rating,
@@ -105,6 +124,7 @@ export const updateMediaItem = async (id: string, changes: Partial<MediaItem>) =
   if (changes.seasons !== undefined) dbChanges.seasons = changes.seasons;
   if (changes.userStatus !== undefined) dbChanges.user_status = changes.userStatus;
   if (changes.collectionId !== undefined) dbChanges.collection_id = changes.collectionId;
+  if (changes.source !== undefined) dbChanges.source = changes.source;
 
   const { error } = await supabase
     .from('media_items')

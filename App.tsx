@@ -5,7 +5,7 @@ import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
 import SearchOverlay from './components/SearchOverlay';
 import Avatar from './components/Avatar';
-import { getSeriesDetails, fetchTrailerInBackground, searchMedia } from './services/gemini';
+import { getSeriesDetails, fetchTrailerInBackground, enrichInSpanish, postProcessMediaData } from './services/gemini';
 import { fetchMediaItems, addMediaItem, updateMediaItem, deleteMediaItem } from './services/db';
 import { supabase } from './lib/supabase';
 
@@ -101,6 +101,8 @@ const App: React.FC = () => {
       return { startedCount, finishedCount };
   };
 
+  const defaultSource = useMemo(() => ({ title: 'api', description: 'api', trailer: 'api' as const }), []);
+
   // --- FILTERING LOGIC ---
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -175,14 +177,19 @@ const App: React.FC = () => {
         }
     }
 
-    const shouldEnrichDescription = !finalResult.description || finalResult.description.includes('Sin descripción') || finalResult.source === 'manual';
-    const shouldEnrichTitle = finalResult.source === 'manual';
+    // Apply AI post-processing ONLY when core fields are missing
+    try {
+      finalResult = await postProcessMediaData(finalResult);
+    } catch (e) {
+      console.warn("Post-processing skipped due to error", e);
+    }
 
     const newItem: MediaItem = {
         id: Date.now().toString(),
         ...finalResult, // Contains basic info + episodes
         collectionId: CollectionType.WATCHLIST,
         addedAt: Date.now(),
+        source: { ...defaultSource },
         userStatus: {},
         seasons: finalResult.seasons || [],
         platform: [],
@@ -202,9 +209,32 @@ const App: React.FC = () => {
     // 3. Save to DB Immediately
     try {
         await addMediaItem(newItem);
-        runBackgroundEnrichment(newItem).finally(() => {
-            enrichmentInFlight.current.delete(newItem.id);
+        
+        // 4. Background Process: Fetch Trailer with AI (using Google Search now)
+        fetchTrailerInBackground(newItem.title, newItem.year, newItem.type, newItem.id, newItem.source).then((trailerUrl) => {
+            if (trailerUrl) {
+                // FORCE UPDATE LOCAL STATE when promise resolves
+                // This ensures the user sees the "Play Trailer" button appear on the card instantly
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, trailerUrl } : item
+                    )
+                );
+            }
         });
+
+        // 5. Background Process: Translate metadata to Spanish if needed
+        enrichInSpanish(newItem).then((translated) => {
+            if (translated) {
+                setItems(currentItems =>
+                    currentItems.map(item =>
+                        item.id === newItem.id ? { ...item, ...translated } : item
+                    )
+                );
+                updateMediaItem(newItem.id, translated);
+            }
+        });
+
     } catch (e) {
         console.error("Error adding item to DB", e);
         // Rollback optimistic update if critical fail
