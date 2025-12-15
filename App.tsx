@@ -176,17 +176,15 @@ const App: React.FC = () => {
       return { pending, inprogress, finished, discarded };
   }, [items]);
 
-  const handleAddItem = async (result: SearchResult, markWatchedForUserId?: string) => {
+  // --- ADD ITEM (Refactored to accept initial status directly) ---
+  const handleAddItem = async (result: SearchResult, initialUserStatus?: Record<string, WatchInfo>) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) {
-        // If it exists but we want to mark it as watched (via Chatbot), we should technically update it,
-        // but handleAddItem is usually for NEW items. 
-        // The chatbot logic will check for existence FIRST, so this alert is mostly for manual UI.
-        if (!markWatchedForUserId) alert("¡Ya tienes esto en tu lista!");
+        if (!initialUserStatus) alert("¡Ya tienes esto en tu lista!");
         return;
     }
     
-    // --- STEP 1: Fast API Enrichment (Non-AI) ---
-    // Get episodes structure for series
+    // --- STEP 1: Enrichment (Episodes) ---
+    // If it's a series, we fetch season data first to know episode counts
     let finalResult = result;
     if (result.type === MediaType.SERIES) {
         try {
@@ -196,30 +194,41 @@ const App: React.FC = () => {
         }
     }
 
-    // Prepare initial user status if requested (e.g. by Chatbot)
-    const initialUserStatus: Record<string, WatchInfo> = {};
-    if (markWatchedForUserId) {
-        initialUserStatus[markWatchedForUserId] = {
-            watched: true, // For movies
-            date: Date.now(),
-            watchedEpisodes: finalResult.type === MediaType.SERIES && finalResult.seasons 
-                ? finalResult.seasons.flatMap(s => Array.from({length: s.episodeCount}, (_, i) => `S${s.seasonNumber}_E${i+1}`))
-                : []
-        };
+    // Determine collection (Watched vs Watchlist) based on the passed status
+    let collectionId = CollectionType.WATCHLIST;
+    let userStatus = initialUserStatus || {};
+
+    // If initial status was passed (from Chatbot), we assume it might be watched.
+    // If it's a series and we just fetched episodes, we might need to fill "watchedEpisodes" if the bot said "watched entire series"
+    // But usually the bot will try to construct the object.
+    // However, the bot doesn't know episode IDs yet (S1_E1). 
+    // Logic: If bot passed { u1: { watched: true } } for a SERIES, we auto-fill all episodes now that we have them.
+    if (initialUserStatus && finalResult.type === MediaType.SERIES && finalResult.seasons) {
+         Object.keys(initialUserStatus).forEach(uid => {
+             if (initialUserStatus[uid].watched) {
+                 const allEps = finalResult.seasons!.flatMap(s => 
+                     Array.from({length: s.episodeCount}, (_, i) => `S${s.seasonNumber}_E${i+1}`)
+                 );
+                 userStatus[uid].watchedEpisodes = allEps;
+             }
+         });
     }
+
+    const isStarted = Object.values(userStatus).some(s => s.watched || (s.watchedEpisodes && s.watchedEpisodes.length > 0));
+    if (isStarted) collectionId = CollectionType.WATCHED;
 
     const newItem: MediaItem = {
         id: Date.now().toString(),
         ...finalResult, 
-        collectionId: markWatchedForUserId ? CollectionType.WATCHED : CollectionType.WATCHLIST,
+        collectionId,
         addedAt: Date.now(),
-        userStatus: initialUserStatus,
+        userStatus, // Directly use the object we constructed/passed
         seasons: finalResult.seasons || [],
         platform: [], 
         releaseDate: '',
         rating: undefined, 
         trailerUrl: '', 
-        isEnriched: false // Flag to trigger AI background process
+        isEnriched: false
     };
 
     // --- STEP 2: Optimistic UI & DB Save ---
@@ -437,7 +446,7 @@ const App: React.FC = () => {
       <SearchOverlay 
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onAdd={handleAddItem}
+        onAdd={(result) => handleAddItem(result)}
       />
 
     </div>

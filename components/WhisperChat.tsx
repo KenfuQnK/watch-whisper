@@ -8,7 +8,7 @@ import { searchMedia, getSeriesDetails } from '../services/gemini';
 interface WhisperChatProps {
     items: MediaItem[];
     users: User[];
-    onAdd: (item: SearchResult, markWatchedForUserId?: string) => void;
+    onAdd: (item: SearchResult, initialUserStatus?: Record<string, WatchInfo>) => void;
     onUpdate: (itemId: string, changes: Partial<MediaItem>) => void;
 }
 
@@ -147,9 +147,19 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
              return `I found multiple results: ${options}. Please specify the year.`;
         }
 
-        // 3. Add New Item as Watched
+        // 3. Add New Item as Watched (Constructing the DB Status Object)
         const bestMatch = filtered[0];
-        onAdd(bestMatch, targetUserId);
+        
+        // Construct the initial JSON status for this user
+        const initialStatus: Record<string, WatchInfo> = {
+            [targetUserId]: {
+                watched: true,
+                date: Date.now(),
+                watchedEpisodes: [] // Will be filled by App.tsx if it's a series
+            }
+        };
+
+        onAdd(bestMatch, initialStatus);
         
         return `Added "${bestMatch.title}" (${bestMatch.year}) to the database and marked it as watched for ${users[0].name}.`;
     };
@@ -165,9 +175,6 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
         try {
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            // Create chat WITHOUT defining tools in config immediately if reusing history
-            // We use generateContent for the turn with tools usually, but here we keep chat state.
-            // The SDK `chats.create` config supports tools.
             const chat = ai.chats.create({
                 model: 'gemini-2.5-flash',
                 config: { 
@@ -186,7 +193,6 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                 if (call.name === 'markAsWatched') {
                     const toolResult = await executeMarkAsWatched(call.args);
                     
-                    // Send tool result back to model
                     const nextResult = await chat.sendMessage({
                          message: [{
                              functionResponse: {

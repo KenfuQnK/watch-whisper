@@ -63,7 +63,7 @@ export interface MediaItem {
 export interface SearchResult {
   id: string; // Internal temp ID for list key
   externalId: string | number; // ID from the API (TVMaze or iTunes)
-  source: 'tvmaze' | 'itunes' | 'cinemeta' | 'manual';
+  source: 'tvmaze' | 'itunes' | 'cinemeta' | 'manual' | 'tmdb';
   title: string;
   type: MediaType;
   year: string;
