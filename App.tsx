@@ -396,7 +396,11 @@ const App: React.FC = () => {
       </main>
 
       {/* WHISPER CHATBOT (New) */}
-      <WhisperChat items={items} users={USERS} />
+      <WhisperChat 
+        items={items} 
+        users={USERS} 
+        onAdd={handleAddItem} // PASSED HERE
+      />
 
       {/* Floating Action Button */}
       <button 
