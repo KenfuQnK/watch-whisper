@@ -8,68 +8,127 @@ const cleanTitle = (title: string, year: string) => `${title.toLowerCase().trim(
 // --- TMDB API IMPLEMENTATION ---
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
-const getTMDBHeaders = () => {
-    return {
-        accept: 'application/json',
-        Authorization: `Bearer ${process.env.TMDB_READ_TOKEN}`
-    };
+// Helper to determine if we are using a Bearer Token (Long) or an API Key (Short)
+const getTMDBConfig = () => {
+    // Try both process.env (defined in vite.config) and import.meta.env (Vite standard)
+    const token = process.env.TMDB_READ_TOKEN || (import.meta as any).env?.VITE_TMDB_READ_TOKEN || '';
+    
+    if (!token) return { mode: 'none', value: '' };
+    
+    // JWT Tokens are usually very long (starts with eyJ...), API Keys are 32 chars hex.
+    if (token.length > 40) {
+        return { mode: 'bearer', value: token };
+    }
+    return { mode: 'query', value: token };
 };
 
 const fetchTrailerFromTMDB = async (title: string, year: string, type: MediaType): Promise<string | null> => {
-    if (!process.env.TMDB_READ_TOKEN) {
-        console.warn("⚠️ [TMDB] No TMDB_READ_TOKEN found. Skipping trailer search.");
+    const { mode, value } = getTMDBConfig();
+    
+    if (mode === 'none') {
+        console.warn("⚠️ [TMDB] No TMDB_READ_TOKEN found in Environment Variables. Skipping trailer search.");
         return null;
     }
 
+    // Prepare Request Options based on auth mode
+    const getOptions = () => {
+        if (mode === 'bearer') {
+            return {
+                headers: {
+                    accept: 'application/json',
+                    Authorization: `Bearer ${value}`
+                }
+            };
+        }
+        return {}; // No headers for query param mode
+    };
+
+    // Helper to append API key if needed
+    const appendAuth = (url: string) => {
+        if (mode === 'query') {
+            return `${url}&api_key=${value}`;
+        }
+        return url;
+    };
+
     try {
         const tmdbType = type === MediaType.MOVIE ? 'movie' : 'tv';
+        
+        // --- STRATEGY 1: EXACT YEAR SEARCH ---
         const yearParam = type === MediaType.MOVIE ? `&primary_release_year=${year}` : `&first_air_date_year=${year}`;
+        let searchUrl = `${TMDB_BASE_URL}/search/${tmdbType}?query=${encodeURIComponent(title)}&include_adult=false&language=es-ES&page=1${yearParam}`;
+        searchUrl = appendAuth(searchUrl);
+
+        let searchRes = await fetch(searchUrl, getOptions());
         
-        // 1. Search for the ID
-        const searchUrl = `${TMDB_BASE_URL}/search/${tmdbType}?query=${encodeURIComponent(title)}&include_adult=false&language=es-ES&page=1${yearParam}`;
+        if (searchRes.status === 401) {
+            console.error("❌ [TMDB] 401 Unauthorized. Verify your TMDB_READ_TOKEN in Vercel settings.");
+            throw new Error("401 Unauthorized - Check API Key");
+        }
         
-        const searchRes = await fetch(searchUrl, { headers: getTMDBHeaders() });
-        const searchData = await searchRes.json();
+        let searchData = await searchRes.json();
+
+        // --- STRATEGY 2: LAX SEARCH (If Strategy 1 fails) ---
+        if (!searchData.results || searchData.results.length === 0) {
+            console.log(`⚠️ [TMDB] Strict search failed for "${title} (${year})". Trying lax search...`);
+            
+            let laxUrl = `${TMDB_BASE_URL}/search/${tmdbType}?query=${encodeURIComponent(title)}&include_adult=false&language=es-ES&page=1`;
+            laxUrl = appendAuth(laxUrl);
+            
+            searchRes = await fetch(laxUrl, getOptions());
+            searchData = await searchRes.json();
+
+            // Client-side filtering: Match title AND year within +/- 1 range
+            if (searchData.results) {
+                const targetYear = parseInt(year);
+                searchData.results = searchData.results.filter((res: any) => {
+                    const resDate = res.release_date || res.first_air_date;
+                    if (!resDate) return false;
+                    const resYear = parseInt(resDate.substring(0, 4));
+                    return Math.abs(resYear - targetYear) <= 1; // Allow 1 year difference
+                });
+            }
+        }
 
         if (!searchData.results || searchData.results.length === 0) {
-            console.log(`⚠️ [TMDB] No results found for "${title}"`);
+            console.log(`❌ [TMDB] No results found for "${title}" even after lax search.`);
             return null;
         }
 
-        // Best match implies first result usually, but let's check basic title match if possible? 
-        // TMDB search is usually good enough to take the first one.
         const tmdbId = searchData.results[0].id;
 
         // 2. Get Videos for that ID
-        // We look for 'es-ES' first, then fallback to 'en-US' (trailers are often in English)
-        let videoResults = [];
+        let videoResults: any[] = [];
         
-        // Try Spanish
-        const videosEsUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=es-ES`;
-        const videosEsRes = await fetch(videosEsUrl, { headers: getTMDBHeaders() });
+        // Try Spanish first
+        let videosEsUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=es-ES`;
+        videosEsUrl = appendAuth(videosEsUrl);
+        
+        const videosEsRes = await fetch(videosEsUrl, getOptions());
         const videosEsData = await videosEsRes.json();
         
         if (videosEsData.results) videoResults = [...videosEsData.results];
 
-        // Try English if no spanish trailer found
-        if (!videoResults.some(v => v.type === "Trailer")) {
-            const videosEnUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=en-US`;
-            const videosEnRes = await fetch(videosEnUrl, { headers: getTMDBHeaders() });
+        // Try English if no spanish trailer found (Fallback)
+        if (!videoResults.some((v: any) => v.type === "Trailer")) {
+            let videosEnUrl = `${TMDB_BASE_URL}/${tmdbType}/${tmdbId}/videos?language=en-US`;
+            videosEnUrl = appendAuth(videosEnUrl);
+            
+            const videosEnRes = await fetch(videosEnUrl, getOptions());
             const videosEnData = await videosEnRes.json();
             if (videosEnData.results) videoResults = [...videoResults, ...videosEnData.results];
         }
 
         // 3. Filter: Site=YouTube, Type=Trailer
-        const trailer = videoResults.find(v => v.site === "YouTube" && v.type === "Trailer");
+        const trailer = videoResults.find((v: any) => v.site === "YouTube" && v.type === "Trailer");
 
         if (trailer) {
             const finalUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
-            console.log(`✅ [TMDB] Trailer found: ${finalUrl}`);
             return finalUrl;
         }
 
         // Fallback: Teaser?
-        const teaser = videoResults.find(v => v.site === "YouTube" && v.type === "Teaser");
+        const teaser = videoResults.find((v: any) => v.site === "YouTube" && v.type === "Teaser");
         if (teaser) {
              return `https://www.youtube.com/watch?v=${teaser.key}`;
         }
@@ -83,7 +142,6 @@ const fetchTrailerFromTMDB = async (title: string, year: string, type: MediaType
 };
 
 // --- METADATA ENRICHMENT (TITLE/DESC) ---
-// Still using AI for translation/metadata normalization as requested previously
 const enrichMetadata = async (item: MediaItem, ai: GoogleGenAI): Promise<Partial<MediaItem>> => {
     console.log(`📚 [METADATA] Traduciendo datos para "${item.title}"...`);
     
@@ -140,8 +198,6 @@ const enrichMetadata = async (item: MediaItem, ai: GoogleGenAI): Promise<Partial
 export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
     if (item.isEnriched) return; 
 
-    // We allow enrichment even if one key is missing, we just skip that part
-    
     // --- PROCESS 1: TRAILER (TMDB) ---
     const trailerPromise = (async () => {
         const url = await fetchTrailerFromTMDB(item.title, item.year || '', item.type);
@@ -162,7 +218,6 @@ export const enrichMediaContent = async (item: MediaItem): Promise<void> => {
 
     try {
         await Promise.allSettled([trailerPromise, metadataPromise]);
-        // Mark as enriched finally
         await updateMediaItem(item.id, { isEnriched: true });
         console.log(`🏁 [ENRICHMENT] Finalizado para ${item.title}`);
     } catch (e) {
@@ -188,13 +243,13 @@ const fetchWithTimeout = async (url: string, timeout = 3000) => {
     }
 };
 
-// 1. iTunes Search API (Timeout Protected)
+// 1. iTunes Search API (DIRECT CALL, Removed Proxy)
 const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => {
   try {
+    // iTunes supports CORS directly, so we remove the proxy.
     const targetUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=movie&entity=movie&country=ES&lang=es_es&limit=15`;
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
     
-    const res = await fetchWithTimeout(proxyUrl, 2500); 
+    const res = await fetchWithTimeout(targetUrl, 2500); 
     if (!res.ok) throw new Error("iTunes Error");
     
     const data = await res.json();
@@ -211,6 +266,7 @@ const fetchMoviesFromItunes = async (query: string): Promise<SearchResult[]> => 
       backupPosterUrl: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x600bb') : '',
     }));
   } catch (e) {
+    console.warn("iTunes Search failed (likely CORS or Timeout). Skipping.");
     return [];
   }
 };

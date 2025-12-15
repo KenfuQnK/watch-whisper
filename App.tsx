@@ -176,9 +176,12 @@ const App: React.FC = () => {
       return { pending, inprogress, finished, discarded };
   }, [items]);
 
-  const handleAddItem = async (result: SearchResult) => {
+  const handleAddItem = async (result: SearchResult, markWatchedForUserId?: string) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) {
-        alert("¡Ya tienes esto en tu lista!");
+        // If it exists but we want to mark it as watched (via Chatbot), we should technically update it,
+        // but handleAddItem is usually for NEW items. 
+        // The chatbot logic will check for existence FIRST, so this alert is mostly for manual UI.
+        if (!markWatchedForUserId) alert("¡Ya tienes esto en tu lista!");
         return;
     }
     
@@ -193,16 +196,28 @@ const App: React.FC = () => {
         }
     }
 
+    // Prepare initial user status if requested (e.g. by Chatbot)
+    const initialUserStatus: Record<string, WatchInfo> = {};
+    if (markWatchedForUserId) {
+        initialUserStatus[markWatchedForUserId] = {
+            watched: true, // For movies
+            date: Date.now(),
+            watchedEpisodes: finalResult.type === MediaType.SERIES && finalResult.seasons 
+                ? finalResult.seasons.flatMap(s => Array.from({length: s.episodeCount}, (_, i) => `S${s.seasonNumber}_E${i+1}`))
+                : []
+        };
+    }
+
     const newItem: MediaItem = {
         id: Date.now().toString(),
         ...finalResult, 
-        collectionId: CollectionType.WATCHLIST,
+        collectionId: markWatchedForUserId ? CollectionType.WATCHED : CollectionType.WATCHLIST,
         addedAt: Date.now(),
-        userStatus: {},
+        userStatus: initialUserStatus,
         seasons: finalResult.seasons || [],
         platform: [], 
         releaseDate: '',
-        rating: undefined, // undefined implies unrated/pending. 9 implies discarded.
+        rating: undefined, 
         trailerUrl: '', 
         isEnriched: false // Flag to trigger AI background process
     };
@@ -214,8 +229,6 @@ const App: React.FC = () => {
         await addMediaItem(newItem);
         
         // --- STEP 3: AI Background Enrichment ---
-        // Fire and forget - The component will update via Supabase subscription 
-        // when this async function finishes updating the DB row.
         enrichMediaContent(newItem).then(() => {
             console.log("Background enrichment kicked off for:", newItem.title);
         });
@@ -223,7 +236,6 @@ const App: React.FC = () => {
     } catch (e) {
         console.error("Error adding item to DB", e);
         setItems(prev => prev.filter(i => i.id !== newItem.id));
-        alert("Error al guardar en la base de datos.");
     }
   };
 
@@ -399,7 +411,8 @@ const App: React.FC = () => {
       <WhisperChat 
         items={items} 
         users={USERS} 
-        onAdd={handleAddItem} // PASSED HERE
+        onAdd={handleAddItem}
+        onUpdate={handleUpdateItem} // New prop for tool execution
       />
 
       {/* Floating Action Button */}
