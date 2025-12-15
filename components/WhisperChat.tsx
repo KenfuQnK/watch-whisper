@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type, Tool } from "@google/genai";
 import { MediaItem, User, WatchInfo, SearchResult, MediaType } from '../types';
 import { MessageSquare, Mic, Send, X, Sparkles, Loader2, Volume2, StopCircle, Plus, Check } from 'lucide-react';
-import { searchMedia, getSeriesDetails } from '../services/gemini';
+import { searchMedia } from '../services/gemini';
 
 interface WhisperChatProps {
     items: MediaItem[];
@@ -41,21 +41,26 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
     // --- TOOL DEFINITIONS ---
     const markAsWatchedTool: FunctionDeclaration = {
         name: "markAsWatched",
-        description: "Marks a movie or series as watched. If it does not exist in the list, it searches for it and adds it as watched. Returns success or ambiguity message.",
+        description: "Usa esta herramienta SOLO cuando el usuario confirme explícitamente que ha visto una película o serie. Permite marcarla para el usuario solicitado.",
         parameters: {
             type: Type.OBJECT,
             properties: {
                 title: {
                     type: Type.STRING,
-                    description: "The title of the movie or series.",
+                    description: "Título de la película o serie.",
                 },
                 year: {
                     type: Type.STRING,
-                    description: "Optional release year to help filter results.",
+                    description: "Año de lanzamiento (opcional).",
                 },
                 mediaType: {
                     type: Type.STRING,
-                    description: "Optional type: 'movie' or 'series'.",
+                    description: "Tipo opcional: 'movie' o 'series'.",
+                },
+                who: {
+                    type: Type.STRING,
+                    description: "Quién lo ha visto. Valores posibles: 'Jesus', 'Julia', 'ambos'. Si dice 'yo' o 'he visto', es Jesus, user 1.",
+                    enum: ['Jesus', 'Julia', 'ambos']
                 }
             },
             required: ["title"],
@@ -71,23 +76,41 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
             return i.rating !== undefined || Object.values(i.userStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes?.length || 0) > 0);
         });
 
-        const historyText = watched.map(i => {
-            const myRating = i.rating ? `(Rated: ${i.rating}/4)` : '';
-            return `- ${i.title} (${i.year}) [${i.type}] ${myRating}`;
+        // Simplified history for token limit
+        const historyText = watched.slice(0, 50).map(i => {
+            const myRating = i.rating ? `(Nota: ${i.rating}/4)` : '';
+            return `- ${i.title} (${i.year}) ${myRating}`;
         }).join('\n');
 
         return `
-        You are "Whisper", a movie/series assistant.
+        You are "Whisper", a friendly and highly knowledgeable movie/series expert assistant.
         
-        CONTEXT (History):
+        YOUR CONTEXT (User's History):
         ${historyText.substring(0, 10000)}
 
         RULES:
-        1. BE DIRECT and CONCISE. 
-        2. If the user says "I have seen X" or "Mark X as watched", use the 'markAsWatched' tool.
-        3. The user interacting is always "${users[0].name}" (ID: ${users[0].id}).
-        4. Recommend NEW content based on history.
-        5. When recommending without marking as watched, use the JSON format: \`:::{"title": "...", "year": "...", "type": "..."}:::\`.
+        1. BE DIRECT and CONCISE. Do not be enthusiastic. Do not use filler words like "Sure!", "Great choice!".
+        2. DO NOT GREET (e.g., "Hello", "Hola") unless the user explicitly greets you first. Start answering immediately.
+        3. Recommend NEW content based on history. Do not recommend what they have already seen. Shortly explain why you recommend it. 
+        4. Recommend two series/tv shows or two movies if the user does not specify how many results he wants.
+        5. If in Voice Mode, keep answers very short.
+        6. Answer questions about plots, actors, or details if user asks for it. Avoid spoiling.
+        
+        TONE: Casual, helpful.
+
+        CRITICAL FEATURE 1:
+        When you recommend a specific movie or series, you MUST append a JSON code at the end of the paragraph to create an "Add" button.
+        Format: \`:::{"title": "Exact Title", "year": "YYYY", "type": "movie" | "series"}:::\`
+        
+        Example: 
+        "You should watch The Matrix. It is a sci-fi classic.
+        :::{"title": "The Matrix", "year": "1999", "type": "movie"}:::"
+
+        CRITICAL FEATURE 2:
+        When the user says he or someone have seen a film or series, use tool "markAsWatched". Identify who he refers.
+
+        User1 = Jesus
+        User2 = Julia
         `;
     };
 
@@ -95,9 +118,19 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
     const executeMarkAsWatched = async (args: any) => {
         const title = args.title;
         const year = args.year;
-        const targetUserId = users[0].id; // Defaulting to first user
+        const who = args.who || 'Jesus'; // Default to current user (Jesus)
 
-        console.log(`[Tool] Searching local for: ${title}`);
+        // Determine Target User IDs
+        let targetIds: string[] = [];
+        if (who.toLowerCase() === 'ambos') {
+            targetIds = [users[0].id, users[1].id];
+        } else if (who.toLowerCase() === 'julia') {
+            targetIds = [users[1].id];
+        } else {
+            targetIds = [users[0].id]; // Default Jesus
+        }
+
+        console.log(`[Tool] Marking "${title}" for: ${targetIds.join(', ')}`);
 
         // 1. Check Local DB
         const localMatch = items.find(i => 
@@ -107,29 +140,28 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
         if (localMatch) {
             // Update existing
-            const currentStatus = localMatch.userStatus[targetUserId] || { watched: false, watchedEpisodes: [] };
+            const newStatusMap = { ...localMatch.userStatus };
             
-            let newStatus: WatchInfo = { ...currentStatus, watched: true, date: Date.now() };
-            
-            // If series, mark all eps
-            if (localMatch.type === MediaType.SERIES && localMatch.seasons) {
-                 const allEps = localMatch.seasons.flatMap(s => 
-                     Array.from({length: s.episodeCount}, (_, i) => `S${s.seasonNumber}_E${i+1}`)
-                 );
-                 newStatus.watchedEpisodes = allEps;
-            }
-
-            onUpdate(localMatch.id, {
-                userStatus: {
-                    ...localMatch.userStatus,
-                    [targetUserId]: newStatus
+            targetIds.forEach(uid => {
+                const currentStatus = newStatusMap[uid] || { watched: false, watchedEpisodes: [] };
+                
+                let newStatus: WatchInfo = { ...currentStatus, watched: true, date: Date.now() };
+                
+                // If series, mark all eps
+                if (localMatch.type === MediaType.SERIES && localMatch.seasons) {
+                    const allEps = localMatch.seasons.flatMap(s => 
+                        Array.from({length: s.episodeCount}, (_, i) => `S${s.seasonNumber}_E${i+1}`)
+                    );
+                    newStatus.watchedEpisodes = allEps;
                 }
+                newStatusMap[uid] = newStatus;
             });
-            return `Successfully marked "${localMatch.title}" as watched for ${users[0].name}.`;
+
+            onUpdate(localMatch.id, { userStatus: newStatusMap });
+            return `He marcado "${localMatch.title}" como vista para ${who === 'ambos' ? 'los dos' : who}.`;
         }
 
         // 2. Not found locally, Search API
-        console.log(`[Tool] Not found locally. Searching external API...`);
         const searchResults = await searchMedia(title);
 
         // Filter by year if provided
@@ -139,29 +171,25 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
         }
 
         if (filtered.length === 0) {
-            return `Could not find any movie or series named "${title}".`;
+            return `No he encontrado nada llamado "${title}". ¿Puedes revisar el nombre?`;
         }
 
-        if (filtered.length > 1 && !year) {
-             const options = filtered.slice(0, 3).map(r => `${r.title} (${r.year})`).join(", ");
-             return `I found multiple results: ${options}. Please specify the year.`;
-        }
-
-        // 3. Add New Item as Watched (Constructing the DB Status Object)
+        // 3. Add New Item as Watched
         const bestMatch = filtered[0];
         
-        // Construct the initial JSON status for this user
-        const initialStatus: Record<string, WatchInfo> = {
-            [targetUserId]: {
+        // Construct the initial JSON status
+        const initialStatus: Record<string, WatchInfo> = {};
+        targetIds.forEach(uid => {
+            initialStatus[uid] = {
                 watched: true,
                 date: Date.now(),
-                watchedEpisodes: [] // Will be filled by App.tsx if it's a series
-            }
-        };
+                watchedEpisodes: [] // Filled by App.tsx logic for series
+            };
+        });
 
         onAdd(bestMatch, initialStatus);
         
-        return `Added "${bestMatch.title}" (${bestMatch.year}) to the database and marked it as watched for ${users[0].name}.`;
+        return `He añadido "${bestMatch.title}" (${bestMatch.year}) a la lista y la he marcado como vista para ${who === 'ambos' ? 'los dos' : who}.`;
     };
 
     // --- TEXT CHAT HANDLER ---
@@ -189,20 +217,24 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
             // Handle Tool Calls
             const calls = result.functionCalls;
             if (calls && calls.length > 0) {
-                const call = calls[0]; // Handle first tool call
-                if (call.name === 'markAsWatched') {
-                    const toolResult = await executeMarkAsWatched(call.args);
-                    
-                    const nextResult = await chat.sendMessage({
-                         message: [{
-                             functionResponse: {
-                                 name: call.name,
-                                 response: { result: toolResult }
-                             }
-                         }]
-                    });
-                    
-                    const finalMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: 'model', text: nextResult.text || "Done." };
+                // Execute all tools sequentially if multiple (rare but possible)
+                let toolOutputs = [];
+                for (const call of calls) {
+                     if (call.name === 'markAsWatched') {
+                        const toolResult = await executeMarkAsWatched(call.args);
+                        toolOutputs.push({
+                            functionResponse: {
+                                name: call.name,
+                                response: { result: toolResult }
+                            }
+                        });
+                    }
+                }
+                
+                // Send results back
+                if (toolOutputs.length > 0) {
+                    const nextResult = await chat.sendMessage({ message: toolOutputs });
+                    const finalMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: 'model', text: nextResult.text || "Hecho." };
                     setMessages(prev => [...prev, finalMsg]);
                 }
             } else {
@@ -212,7 +244,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Error connecting or processing request." }]);
+            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Lo siento, hubo un error de conexión." }]);
         } finally {
             setIsLoading(false);
         }
@@ -251,7 +283,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
                     systemInstruction: getSystemContext(),
-                    tools: tools // Add tools to live session
+                    tools: tools 
                 },
                 callbacks: {
                     onopen: () => {
@@ -270,7 +302,6 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                         processorRef.current = processor;
                     },
                     onmessage: async (msg: LiveServerMessage) => {
-                        // Handle Function Calling in Live API
                         if (msg.toolCall) {
                             for (const fc of msg.toolCall.functionCalls) {
                                 if (fc.name === 'markAsWatched') {
