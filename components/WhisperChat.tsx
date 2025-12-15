@@ -56,10 +56,12 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd }) => {
         ${historyText.substring(0, 10000)}
 
         RULES:
-        1. BE DIRECT. Do not be enthusiastic. Do not use filler words like "Sure!", "Great choice!".
+        1. BE DIRECT and CONCISE. Do not be enthusiastic. Do not use filler words like "Sure!", "Great choice!".
         2. DO NOT GREET (e.g., "Hello", "Hola") unless the user explicitly greets you first. Start answering immediately.
-        3. Recommend NEW content based on history.
-        4. If in Voice Mode, keep answers very short.
+        3. Recommend NEW content based on history. Do not recommend what they have already seen. Shortly explain why you recommend it. 
+        4. Recommend two series/tv shows or two movies if the user does not specify how many results he wants.
+        5. If in Voice Mode, keep answers very short.
+        6. Answer questions about plots, actors, or details if user asks for it. Avoid spoiling.
         
         CRITICAL FEATURE:
         When you recommend a specific movie or series, you MUST append a JSON code at the end of the paragraph to create an "Add" button.
