@@ -92,7 +92,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({ item: propItem, users, isOp
            <button onClick={handleSaveAndClose} className="absolute top-3 right-3 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white z-10"><X size={20} /></button>
            <div className="absolute bottom-4 left-6 z-10 flex gap-2">
               {localItem.trailerUrl ? (
-                  <button onClick={() => setIsPlayingTrailer(true)} className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur shadow-lg transition-transform hover:scale-105"><Youtube size={16} /> Ver Trailer Full Screen</button>
+                  <button onClick={() => setIsPlayingTrailer(true)} className="bg-red-600/90 hover:bg-red-600 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur shadow-lg transition-transform hover:scale-105"><Youtube size={16} /> Ver Trailer</button>
               ) : !localItem.isEnriched && <div className="bg-indigo-600/50 text-indigo-100 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur animate-pulse"><Loader2 size={14} className="animate-spin" /> Buscando metadatos...</div>}
            </div>
         </div>
@@ -165,7 +165,7 @@ const WatchedModal: React.FC<WatchedModalProps> = ({ item: propItem, users, isOp
         </div>
 
         <div className="p-4 bg-slate-900/50 border-t border-slate-700 flex justify-between items-center">
-             <button onClick={() => { onDelete(localItem.id); onClose(); }} className="flex items-center gap-2 text-red-400 text-xs hover:bg-red-400/10 px-4 py-2 rounded-lg font-bold"><Trash2 size={16} /> Eliminar Título</button>
+             <button onClick={() => { onDelete(localItem.id); onClose(); }} className="flex items-center gap-2 text-red-400 text-xs hover:bg-red-400/10 px-4 py-2 rounded-lg font-bold"><Trash2 size={16} /> Eliminar</button>
              <button onClick={handleSaveAndClose} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-2.5 rounded-lg font-bold text-sm shadow-xl"><Check size={18} /> Aceptar</button>
         </div>
       </div>

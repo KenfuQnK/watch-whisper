@@ -16,6 +16,7 @@ const getPlatformColor = (p: string) => {
         case 'Disney+': return 'bg-blue-600 text-white';
         case 'AppleTV': return 'bg-gray-200 text-black';
         case 'Prime': return 'bg-sky-500 text-white';
+        case 'Movistar+': return 'bg-black-500 text-white';
         case 'Stremio': return 'bg-indigo-500 text-white';
         case 'Torrent': return 'bg-green-600 text-white';
         case 'Online': return 'bg-orange-500 text-white';
