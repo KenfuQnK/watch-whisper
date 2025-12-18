@@ -1,4 +1,5 @@
 
+
 export enum MediaType {
   MOVIE = 'movie',
   SERIES = 'series',
@@ -72,4 +73,7 @@ export interface SearchResult {
   backupPosterUrl?: string;
   seasons?: SeasonData[]; 
   trailerUrl?: string;
+  // Added platforms and releaseDate to match properties being assigned in services/gemini.ts
+  platforms?: string[];
+  releaseDate?: string;
 }
