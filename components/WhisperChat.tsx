@@ -61,6 +61,10 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
     // Silence detection refs
     const silenceTimeoutRef = useRef<number | null>(null);
 
+    // Transcription accumulation refs
+    const currentInputTranscription = useRef('');
+    const currentOutputTranscription = useRef('');
+
     const markAsWatchedTool: FunctionDeclaration = {
         name: "markAsWatched",
         description: MARK_AS_WATCHED_TOOL_DESCRIPTION,
@@ -118,15 +122,32 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
         sourcesRef.current.clear();
         if (silenceTimeoutRef.current) window.clearTimeout(silenceTimeoutRef.current);
         
+        // Final flush of transcription if session ends
+        flushTranscription();
+
         setIsVoiceMode(false);
         setIsConnected(false);
         setIsSpeaking(false);
         setIsUserTalking(false);
     };
 
+    const flushTranscription = () => {
+        if (currentInputTranscription.current || currentOutputTranscription.current) {
+            const userText = currentInputTranscription.current.trim();
+            const botText = currentOutputTranscription.current.trim();
+            if (userText) setMessages(prev => [...prev, { id: Date.now() + Math.random(), role: 'user', text: userText }]);
+            if (botText) setMessages(prev => [...prev, { id: Date.now() + Math.random(), role: 'model', text: botText }]);
+            currentInputTranscription.current = '';
+            currentOutputTranscription.current = '';
+        }
+    };
+
     const startVoiceMode = async () => {
         if (!process.env.API_KEY) return;
         setIsVoiceMode(true);
+        currentInputTranscription.current = '';
+        currentOutputTranscription.current = '';
+
         try {
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -141,7 +162,9 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                     responseModalities: [Modality.AUDIO], 
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
                     systemInstruction: getSystemContext(),
-                    tools: [{ functionDeclarations: [markAsWatchedTool] }]
+                    tools: [{ functionDeclarations: [markAsWatchedTool] }],
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {}
                 },
                 callbacks: {
                     onopen: () => {
@@ -195,6 +218,17 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                         proc.connect(ctx.destination);
                     },
                     onmessage: async (msg: LiveServerMessage) => {
+                        // Handle Transcriptions
+                        if (msg.serverContent?.inputTranscription) {
+                            currentInputTranscription.current += msg.serverContent.inputTranscription.text + ' ';
+                        }
+                        if (msg.serverContent?.outputTranscription) {
+                            currentOutputTranscription.current += msg.serverContent.outputTranscription.text + ' ';
+                        }
+                        if (msg.serverContent?.turnComplete) {
+                            flushTranscription();
+                        }
+
                         if (msg.toolCall) {
                             for (const fc of msg.toolCall.functionCalls) {
                                 const result = await executeMarkAsWatched(fc.args);
@@ -253,6 +287,11 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
         finally { setIsLoading(false); }
     };
 
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
     return (
         <>
             <button onClick={() => setIsOpen(!isOpen)} className="fixed left-6 bottom-6 z-40 bg-indigo-600 text-white p-4 rounded-full shadow-2xl transition-all hover:scale-110 active:scale-95"><Sparkles size={28} /></button>
@@ -291,13 +330,12 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                                 {messages.map(m => (
                                     <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                         <div className={`p-3 rounded-2xl text-sm max-w-[85%] shadow-md ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none'}`}>
-                                            <div className="markdown-content">
-                                                <ReactMarkdown>{m.text}</ReactMarkdown>
-                                            </div>
+                                            <MessageRenderer text={m.text} onAdd={onAdd} />
                                         </div>
                                     </div>
                                 ))}
                                 {isLoading && <div className="flex justify-start"><div className="bg-slate-800 p-3 rounded-2xl rounded-tl-none"><Loader2 className="animate-spin opacity-50 text-indigo-400" size={18} /></div></div>}
+                                <div ref={messagesEndRef} />
                             </div>
                             <div className="p-3 bg-slate-800 border-t border-slate-700 flex gap-2 shrink-0">
                                 <button onClick={startVoiceMode} className="p-2 text-indigo-400 hover:bg-slate-700 rounded-full transition-colors" title="Modo Voz"><Mic size={22} /></button>
@@ -316,6 +354,81 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                 </div>
             )}
         </>
+    );
+};
+
+// --- SUB-COMPONENTS ---
+
+const MessageRenderer: React.FC<{ text: string, onAdd: (item: SearchResult) => void }> = ({ text, onAdd }) => {
+    // Splits text into chunks, separating the :::JSON::: feature
+    const parts = text.split(/(:::{.*?}:::)/g);
+
+    return (
+        <div className="space-y-2">
+            {parts.map((part, idx) => {
+                if (part.startsWith(':::{') && part.endsWith(':::')) {
+                    try {
+                        const jsonStr = part.slice(3, -3);
+                        const meta = JSON.parse(jsonStr);
+                        return <AddButton key={idx} meta={meta} onAdd={onAdd} />;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+                if (!part.trim()) return null;
+                return (
+                    <div key={idx} className="markdown-content">
+                        <ReactMarkdown>{part}</ReactMarkdown>
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
+const AddButton: React.FC<{ meta: any, onAdd: (item: SearchResult) => void }> = ({ meta, onAdd }) => {
+    const [loading, setLoading] = useState(false);
+    const [added, setAdded] = useState(false);
+
+    const handleClick = async () => {
+        if (added) return;
+        setLoading(true);
+        try {
+            const results = await searchMedia(meta.title);
+            const bestMatch = results[0];
+            if (bestMatch) {
+                onAdd(bestMatch);
+                setAdded(true);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (added) {
+        return (
+            <div className="flex items-center gap-2 bg-green-900/30 text-green-400 p-2 rounded-lg text-xs font-bold border border-green-800 mt-2 mb-2">
+                <Check size={14} /> Añadido: {meta.title}
+            </div>
+        );
+    }
+
+    return (
+        <button 
+            onClick={handleClick}
+            disabled={loading}
+            className="w-full flex items-center justify-between bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg text-xs transition-colors border border-slate-600 mt-2 mb-2 group shadow-sm"
+        >
+            <span className="font-bold flex flex-col items-start text-left">
+                <span>{meta.title}</span>
+                <span className="text-[10px] text-slate-400 font-normal">{meta.year} • {meta.type}</span>
+            </span>
+            <span className="bg-indigo-600 group-hover:bg-indigo-500 p-1.5 rounded-md text-white transition-colors">
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            </span>
+        </button>
     );
 };
 
