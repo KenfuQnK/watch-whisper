@@ -5,6 +5,8 @@ import { MediaItem, User, WatchInfo, SearchResult, MediaType } from '../types';
 import { MessageSquare, Mic, Send, X, Sparkles, Loader2, Volume2, StopCircle, Plus, Check } from 'lucide-react';
 import { searchMedia } from '../services/gemini';
 import { MARK_AS_WATCHED_TOOL_DESCRIPTION, SYSTEM_INSTRUCTION_TEMPLATE } from '../constants/prompts';
+import whipyImage from '../assets/img/whispy_sit01.png';
+
 
 interface WhisperChatProps {
     items: MediaItem[];
@@ -20,13 +22,13 @@ const VoiceVisualizer = ({ isUserTalking, isBotTalking, isConnected }: { isUserT
                 const isActive = (isUserTalking || isBotTalking) && isConnected;
                 const colorClass = isBotTalking ? 'bg-pink-400' : 'bg-indigo-400';
                 return (
-                    <div 
-                        key={i} 
-                        className={`w-1.5 ${colorClass} rounded-full transition-all duration-150 ${isActive ? 'animate-bounce' : 'h-2 opacity-30'}`} 
-                        style={{ 
-                            height: isActive ? `${Math.random() * 60 + 20}%` : '8px', 
-                            animationDelay: `${i * 0.05}s` 
-                        }} 
+                    <div
+                        key={i}
+                        className={`w-1.5 ${colorClass} rounded-full transition-all duration-150 ${isActive ? 'animate-bounce' : 'h-2 opacity-30'}`}
+                        style={{
+                            height: isActive ? `${Math.random() * 60 + 20}%` : '8px',
+                            animationDelay: `${i * 0.05}s`
+                        }}
                     />
                 );
             })}
@@ -57,7 +59,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
     const streamRef = useRef<MediaStream | null>(null);
     const nextStartTimeRef = useRef<number>(0);
     const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-    
+
     // Silence detection refs
     const silenceTimeoutRef = useRef<number | null>(null);
 
@@ -95,7 +97,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
         const title = args.title;
         const who = args.who || 'Jesus';
         const targetIds = who === 'ambos' ? [users[0].id, users[1].id] : (who === 'Julia' ? [users[1].id] : [users[0].id]);
-        
+
         const match = items.find(i => i.title.toLowerCase() === title.toLowerCase());
         if (match) {
             const status = { ...match.userStatus };
@@ -114,14 +116,14 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
     const stopVoiceMode = async () => {
         if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-            try { await audioCtxRef.current.close(); } catch(e) {}
+            try { await audioCtxRef.current.close(); } catch (e) { }
         }
         audioCtxRef.current = null;
         streamRef.current?.getTracks().forEach(t => t.stop());
         sourcesRef.current.forEach(s => s.stop());
         sourcesRef.current.clear();
         if (silenceTimeoutRef.current) window.clearTimeout(silenceTimeoutRef.current);
-        
+
         // Final flush of transcription if session ends
         flushTranscription();
 
@@ -158,8 +160,8 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
             const sessionPromise = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-                config: { 
-                    responseModalities: [Modality.AUDIO], 
+                config: {
+                    responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
                     systemInstruction: getSystemContext(),
                     tools: [{ functionDeclarations: [markAsWatchedTool] }],
@@ -171,10 +173,10 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                         setIsConnected(true);
                         const source = ctx.createMediaStreamSource(stream);
                         const proc = ctx.createScriptProcessor(4096, 1, 1);
-                        
+
                         proc.onaudioprocess = (e) => {
                             const data = e.inputBuffer.getChannelData(0);
-                            
+
                             // Calculate simple RMS for volume
                             let sum = 0;
                             for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
@@ -200,16 +202,16 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
                             const int16 = new Int16Array(data.length);
                             for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
-                            
+
                             sessionPromise.then(s => {
                                 try {
-                                    s.sendRealtimeInput({ 
-                                        media: { 
-                                            data: btoa(String.fromCharCode(...new Uint8Array(int16.buffer))), 
-                                            mimeType: 'audio/pcm;rate=16000' 
-                                        } 
+                                    s.sendRealtimeInput({
+                                        media: {
+                                            data: btoa(String.fromCharCode(...new Uint8Array(int16.buffer))),
+                                            mimeType: 'audio/pcm;rate=16000'
+                                        }
                                     });
-                                } catch(err) {
+                                } catch (err) {
                                     // Session might be closed
                                 }
                             });
@@ -229,7 +231,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                             flushTranscription();
                         }
 
-                        if (msg.toolCall) {
+                        if (msg.toolCall?.functionCalls) {
                             for (const fc of msg.toolCall.functionCalls) {
                                 const result = await executeMarkAsWatched(fc.args);
                                 sessionPromise.then(s => s.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result } } }));
@@ -241,27 +243,27 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                             nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
                             const b64 = atob(audio);
                             const bytes = new Uint8Array(b64.length);
-                            for(let i=0; i<b64.length; i++) bytes[i] = b64.charCodeAt(i);
+                            for (let i = 0; i < b64.length; i++) bytes[i] = b64.charCodeAt(i);
                             const data16 = new Int16Array(bytes.buffer);
                             const buffer = outputCtx.createBuffer(1, data16.length, 24000);
                             const ch = buffer.getChannelData(0);
-                            for(let i=0; i<data16.length; i++) ch[i] = data16[i] / 32768.0;
+                            for (let i = 0; i < data16.length; i++) ch[i] = data16[i] / 32768.0;
                             const s = outputCtx.createBufferSource();
                             s.buffer = buffer; s.connect(outputCtx.destination);
-                            s.onended = () => { 
-                                sourcesRef.current.delete(s); 
-                                if(!sourcesRef.current.size) setIsSpeaking(false); 
+                            s.onended = () => {
+                                sourcesRef.current.delete(s);
+                                if (!sourcesRef.current.size) setIsSpeaking(false);
                             };
                             s.start(nextStartTimeRef.current);
                             nextStartTimeRef.current += buffer.duration;
                             sourcesRef.current.add(s);
                         }
                     },
-                    onclose: stopVoiceMode, 
+                    onclose: stopVoiceMode,
                     onerror: stopVoiceMode
                 }
             });
-        } catch(e) { stopVoiceMode(); }
+        } catch (e) { stopVoiceMode(); }
     };
 
     const handleSendText = async () => {
@@ -270,12 +272,12 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
         setMessages(p => [...p, msg]); setInput(''); setIsLoading(true);
         try {
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const chat = ai.chats.create({ 
-                model: 'gemini-3-flash-preview', 
-                config: { 
-                    systemInstruction: getSystemContext(), 
-                    tools: [{ functionDeclarations: [markAsWatchedTool] }] 
-                } 
+            const chat = ai.chats.create({
+                model: 'gemini-3-flash-preview',
+                config: {
+                    systemInstruction: getSystemContext(),
+                    tools: [{ functionDeclarations: [markAsWatchedTool] }]
+                }
             });
             const res = await chat.sendMessage({ message: input });
             if (res.functionCalls?.[0]) {
@@ -283,7 +285,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                 const finalRes = await chat.sendMessage({ message: [{ functionResponse: { name: res.functionCalls[0].name, response: { result: tr } } }] });
                 setMessages(p => [...p, { id: Date.now(), role: 'model', text: finalRes.text }]);
             } else { setMessages(p => [...p, { id: Date.now(), role: 'model', text: res.text }]); }
-        } catch(e) { setMessages(p => [...p, { id: Date.now(), role: 'model', text: 'Error.' }]); }
+        } catch (e) { setMessages(p => [...p, { id: Date.now(), role: 'model', text: 'Error.' }]); }
         finally { setIsLoading(false); }
     };
 
@@ -294,17 +296,36 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
 
     return (
         <>
-            <button onClick={() => setIsOpen(!isOpen)} className="fixed left-6 bottom-6 z-40 bg-indigo-600 text-white p-4 rounded-full shadow-2xl transition-all hover:scale-110 active:scale-95"><Sparkles size={28} /></button>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="fixed right-6 bottom-6 z-40 transition-all hover:scale-110 active:scale-95 group"
+            >
+                <div className="relative">
+                    <img
+                        src={whipyImage}
+                        alt="Whispy"
+                        className="w-64 h-64 object-contain drop-shadow-2xl"
+                    />
+                    {!isOpen && (
+                        <div className="absolute top-2 right-2 bg-indigo-600 rounded-full p-2 border-2 border-slate-900 group-hover:bg-indigo-500 transition-colors shadow-lg">
+                            <Sparkles size={14} className="text-white" />
+                        </div>
+                    )}
+                </div>
+            </button>
+
+
             {isOpen && (
-                <div className="fixed left-6 bottom-24 w-80 sm:w-96 h-[500px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col z-40 animate-in slide-in-from-left-4 overflow-hidden">
+                <div className="fixed right-6 bottom-24 w-80 sm:w-96 h-[500px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col z-40 animate-in slide-in-from-right-4 overflow-hidden">
                     <div className="bg-slate-800 p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
-                        <div className="flex items-center gap-2"><Sparkles className="text-indigo-400" size={18} /><span className="font-bold text-white tracking-tight">Whisper AI</span></div>
+                        <div className="flex items-center gap-2"><Sparkles className="text-indigo-400" size={18} /><span className="font-bold text-white tracking-tight">Whispy</span></div>
+
                         <button onClick={() => { stopVoiceMode(); setIsOpen(false); }} className="hover:bg-slate-700 p-1 rounded-full transition-colors"><X size={20} className="text-slate-400" /></button>
                     </div>
                     {isVoiceMode ? (
                         <div className="flex-1 flex flex-col items-center justify-center p-8 bg-indigo-950/20">
                             <VoiceVisualizer isUserTalking={isUserTalking} isBotTalking={isSpeaking} isConnected={isConnected} />
-                            
+
                             <div className="mt-12 flex flex-col items-center gap-6">
                                 <div className="relative flex items-center justify-center">
                                     <div className={`absolute inset-0 bg-indigo-500 rounded-full animate-ping opacity-20 ${isUserTalking ? 'block' : 'hidden'}`} />
@@ -312,7 +333,7 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                                         {isSpeaking ? <Volume2 size={32} className="text-white" /> : <Mic size={32} className="text-white" />}
                                     </div>
                                 </div>
-                                
+
                                 <button onClick={stopVoiceMode} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-8 py-3 rounded-full border border-red-500/30 font-bold flex items-center gap-2 transition-all active:scale-95">
                                     <StopCircle size={20} /> Detener
                                 </button>
@@ -339,13 +360,13 @@ const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate
                             </div>
                             <div className="p-3 bg-slate-800 border-t border-slate-700 flex gap-2 shrink-0">
                                 <button onClick={startVoiceMode} className="p-2 text-indigo-400 hover:bg-slate-700 rounded-full transition-colors" title="Modo Voz"><Mic size={22} /></button>
-                                <input 
-                                    type="text" 
-                                    value={input} 
-                                    onChange={e => setInput(e.target.value)} 
-                                    onKeyDown={e => e.key === 'Enter' && handleSendText()} 
-                                    placeholder="Escribe algo..." 
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-full px-4 py-2 text-sm focus:outline-none focus:border-indigo-500 transition-all text-white" 
+                                <input
+                                    type="text"
+                                    value={input}
+                                    onChange={e => setInput(e.target.value)}
+                                    onKeyDown={e => e.key === 'Enter' && handleSendText()}
+                                    placeholder="Escribe algo..."
+                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-full px-4 py-2 text-sm focus:outline-none focus:border-indigo-500 transition-all text-white"
                                 />
                                 <button onClick={handleSendText} disabled={!input.trim() || isLoading} className="p-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><Send size={20} /></button>
                             </div>
@@ -416,7 +437,7 @@ const AddButton: React.FC<{ meta: any, onAdd: (item: SearchResult) => void }> = 
     }
 
     return (
-        <button 
+        <button
             onClick={handleClick}
             disabled={loading}
             className="w-full flex items-center justify-between bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg text-xs transition-colors border border-slate-600 mt-2 mb-2 group shadow-sm"
