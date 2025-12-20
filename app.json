@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Watch Whisper",
+    "slug": "watch-whisper",
+    "scheme": "watchwhisper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "plugins": ["expo-router"],
+    "extra": {
+      "API_KEY": "",
+      "TMDB_READ_TOKEN": "",
+      "SUPABASE_URL": "https://ulrbgmuqqenpauejbkcj.supabase.co",
+      "SUPABASE_ANON_KEY": ""
+    }
+  }
+}

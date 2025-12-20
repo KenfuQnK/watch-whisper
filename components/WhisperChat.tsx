@@ -1,456 +1,298 @@
-import React, { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type, Tool } from "@google/genai";
-import { MediaItem, User, WatchInfo, SearchResult, MediaType } from '../types';
-import { MessageSquare, Mic, Send, X, Sparkles, Loader2, Volume2, StopCircle, Plus, Check } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Modal, View, Text, Pressable, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import Markdown from 'react-native-markdown-display';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
+import {
+  GoogleGenAI,
+  FunctionDeclaration,
+  Type,
+  FunctionCallingConfigMode,
+  createPartFromFunctionCall,
+  createPartFromFunctionResponse,
+  Content
+} from '@google/genai';
+import { MediaItem, User, WatchInfo, SearchResult } from '../types';
+import { MessageSquare, Mic, Send, X, Sparkles, Volume2, StopCircle } from 'lucide-react-native';
 import { searchMedia } from '../services/gemini';
 import { MARK_AS_WATCHED_TOOL_DESCRIPTION, SYSTEM_INSTRUCTION_TEMPLATE } from '../constants/prompts';
-import whipyImage from '../assets/img/whispy_sit01.png';
-
+import { API_KEY } from '../lib/env';
 
 interface WhisperChatProps {
-    items: MediaItem[];
-    users: User[];
-    onAdd: (item: SearchResult, initialUserStatus?: Record<string, WatchInfo>) => void;
-    onUpdate: (itemId: string, changes: Partial<MediaItem>) => void;
+  items: MediaItem[];
+  users: User[];
+  onAdd: (item: SearchResult, initialUserStatus?: Record<string, WatchInfo>) => void;
+  onUpdate: (itemId: string, changes: Partial<MediaItem>) => void;
 }
 
-const VoiceVisualizer = ({ isUserTalking, isBotTalking, isConnected }: { isUserTalking: boolean; isBotTalking: boolean; isConnected: boolean }) => (
-    <div className="flex flex-col items-center gap-4 w-full">
-        <div className="flex items-center justify-center gap-1.5 h-16 w-full">
-            {[...Array(12)].map((_, i) => {
-                const isActive = (isUserTalking || isBotTalking) && isConnected;
-                const colorClass = isBotTalking ? 'bg-pink-400' : 'bg-indigo-400';
-                return (
-                    <div
-                        key={i}
-                        className={`w-1.5 ${colorClass} rounded-full transition-all duration-150 ${isActive ? 'animate-bounce' : 'h-2 opacity-30'}`}
-                        style={{
-                            height: isActive ? `${Math.random() * 60 + 20}%` : '8px',
-                            animationDelay: `${i * 0.05}s`
-                        }}
-                    />
-                );
-            })}
-        </div>
-        <div className="text-[10px] font-black tracking-[0.2em] uppercase flex items-center gap-2">
-            {isBotTalking ? (
-                <span className="text-pink-400 animate-pulse flex items-center gap-1"><Volume2 size={12} /> Whisper hablando</span>
-            ) : isUserTalking ? (
-                <span className="text-indigo-400 animate-pulse flex items-center gap-1"><Mic size={12} /> Escuchando...</span>
-            ) : (
-                <span className="text-slate-500">{isConnected ? 'Silencio' : 'Conectando'}</span>
-            )}
-        </div>
-    </div>
-);
-
 const WhisperChat: React.FC<WhisperChatProps> = ({ items, users, onAdd, onUpdate }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const [messages, setMessages] = useState<any[]>([]);
-    const [input, setInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [isVoiceMode, setIsVoiceMode] = useState(false);
-    const [isConnected, setIsConnected] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
-    const [isUserTalking, setIsUserTalking] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [history, setHistory] = useState<Content[]>([]);
 
-    const audioCtxRef = useRef<AudioContext | null>(null);
-    const streamRef = useRef<MediaStream | null>(null);
-    const nextStartTimeRef = useRef<number>(0);
-    const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
-    // Silence detection refs
-    const silenceTimeoutRef = useRef<number | null>(null);
+  const markAsWatchedTool: FunctionDeclaration = {
+    name: 'markAsWatched',
+    description: MARK_AS_WATCHED_TOOL_DESCRIPTION,
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        who: { type: Type.STRING, enum: ['Jesus', 'Julia', 'ambos'] }
+      },
+      required: ['title'],
+    },
+  };
 
-    // Transcription accumulation refs
-    const currentInputTranscription = useRef('');
-    const currentOutputTranscription = useRef('');
+  const getSystemContext = () => {
+    const watched = items.filter(i => {
+      return i.rating !== undefined || Object.values(i.userStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes?.length || 0) > 0);
+    });
 
-    const markAsWatchedTool: FunctionDeclaration = {
-        name: "markAsWatched",
-        description: MARK_AS_WATCHED_TOOL_DESCRIPTION,
-        parameters: {
-            type: Type.OBJECT,
-            properties: {
-                title: { type: Type.STRING },
-                who: { type: Type.STRING, enum: ['Jesus', 'Julia', 'ambos'] }
-            },
-            required: ["title"],
-        },
-    };
+    const historyText = watched.slice(0, 50).map(i => {
+      const myRating = i.rating ? `(Nota: ${i.rating}/4)` : '';
+      return `- ${i.title} (${i.year}) ${myRating}`;
+    }).join('\n');
 
-    const getSystemContext = () => {
-        const watched = items.filter(i => {
-            return i.rating !== undefined || Object.values(i.userStatus).some((s: WatchInfo) => s.watched || (s.watchedEpisodes?.length || 0) > 0);
-        });
+    return SYSTEM_INSTRUCTION_TEMPLATE(historyText.substring(0, 10000));
+  };
 
-        const historyText = watched.slice(0, 50).map(i => {
-            const myRating = i.rating ? `(Nota: ${i.rating}/4)` : '';
-            return `- ${i.title} (${i.year}) ${myRating}`;
-        }).join('\n');
+  const executeMarkAsWatched = async (args: any) => {
+    const title = args.title;
+    const who = args.who || 'Jesus';
+    const targetIds = who === 'ambos' ? [users[0].id, users[1].id] : (who === 'Julia' ? [users[1].id] : [users[0].id]);
 
-        return SYSTEM_INSTRUCTION_TEMPLATE(historyText.substring(0, 10000));
-    };
-
-    const executeMarkAsWatched = async (args: any) => {
-        const title = args.title;
-        const who = args.who || 'Jesus';
-        const targetIds = who === 'ambos' ? [users[0].id, users[1].id] : (who === 'Julia' ? [users[1].id] : [users[0].id]);
-
-        const match = items.find(i => i.title.toLowerCase() === title.toLowerCase());
-        if (match) {
-            const status = { ...match.userStatus };
-            targetIds.forEach(id => { status[id] = { watched: true, date: Date.now(), watchedEpisodes: [] }; });
-            onUpdate(match.id, { userStatus: status });
-            return `He marcado "${match.title}" para ${who}.`;
-        }
-
-        const res = await searchMedia(title);
-        if (!res.length) return `No encontré "${title}".`;
-        const initialStatus: any = {};
-        targetIds.forEach(id => { initialStatus[id] = { watched: true, date: Date.now(), watchedEpisodes: [] }; });
-        onAdd(res[0], initialStatus);
-        return `Añadido y marcado "${res[0].title}" para ${who}.`;
-    };
-
-    const stopVoiceMode = async () => {
-        if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-            try { await audioCtxRef.current.close(); } catch (e) { }
-        }
-        audioCtxRef.current = null;
-        streamRef.current?.getTracks().forEach(t => t.stop());
-        sourcesRef.current.forEach(s => s.stop());
-        sourcesRef.current.clear();
-        if (silenceTimeoutRef.current) window.clearTimeout(silenceTimeoutRef.current);
-
-        // Final flush of transcription if session ends
-        flushTranscription();
-
-        setIsVoiceMode(false);
-        setIsConnected(false);
-        setIsSpeaking(false);
-        setIsUserTalking(false);
-    };
-
-    const flushTranscription = () => {
-        if (currentInputTranscription.current || currentOutputTranscription.current) {
-            const userText = currentInputTranscription.current.trim();
-            const botText = currentOutputTranscription.current.trim();
-            if (userText) setMessages(prev => [...prev, { id: Date.now() + Math.random(), role: 'user', text: userText }]);
-            if (botText) setMessages(prev => [...prev, { id: Date.now() + Math.random(), role: 'model', text: botText }]);
-            currentInputTranscription.current = '';
-            currentOutputTranscription.current = '';
-        }
-    };
-
-    const startVoiceMode = async () => {
-        if (!process.env.API_KEY) return;
-        setIsVoiceMode(true);
-        currentInputTranscription.current = '';
-        currentOutputTranscription.current = '';
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            audioCtxRef.current = ctx;
-            const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamRef.current = stream;
-
-            const sessionPromise = ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
-                    systemInstruction: getSystemContext(),
-                    tools: [{ functionDeclarations: [markAsWatchedTool] }],
-                    inputAudioTranscription: {},
-                    outputAudioTranscription: {}
-                },
-                callbacks: {
-                    onopen: () => {
-                        setIsConnected(true);
-                        const source = ctx.createMediaStreamSource(stream);
-                        const proc = ctx.createScriptProcessor(4096, 1, 1);
-
-                        proc.onaudioprocess = (e) => {
-                            const data = e.inputBuffer.getChannelData(0);
-
-                            // Calculate simple RMS for volume
-                            let sum = 0;
-                            for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-                            const rms = Math.sqrt(sum / data.length);
-                            const volume = rms * 100;
-
-                            // Threshold for "user talking"
-                            if (volume > 2) {
-                                if (!isUserTalking) setIsUserTalking(true);
-                                if (silenceTimeoutRef.current) {
-                                    window.clearTimeout(silenceTimeoutRef.current);
-                                    silenceTimeoutRef.current = null;
-                                }
-                            } else {
-                                if (isUserTalking && !silenceTimeoutRef.current) {
-                                    // Start 3s silence timeout before considering turn finished
-                                    silenceTimeoutRef.current = window.setTimeout(() => {
-                                        setIsUserTalking(false);
-                                        silenceTimeoutRef.current = null;
-                                    }, 3000);
-                                }
-                            }
-
-                            const int16 = new Int16Array(data.length);
-                            for (let i = 0; i < data.length; i++) int16[i] = data[i] * 32768;
-
-                            sessionPromise.then(s => {
-                                try {
-                                    s.sendRealtimeInput({
-                                        media: {
-                                            data: btoa(String.fromCharCode(...new Uint8Array(int16.buffer))),
-                                            mimeType: 'audio/pcm;rate=16000'
-                                        }
-                                    });
-                                } catch (err) {
-                                    // Session might be closed
-                                }
-                            });
-                        };
-                        source.connect(proc);
-                        proc.connect(ctx.destination);
-                    },
-                    onmessage: async (msg: LiveServerMessage) => {
-                        // Handle Transcriptions
-                        if (msg.serverContent?.inputTranscription) {
-                            currentInputTranscription.current += msg.serverContent.inputTranscription.text + ' ';
-                        }
-                        if (msg.serverContent?.outputTranscription) {
-                            currentOutputTranscription.current += msg.serverContent.outputTranscription.text + ' ';
-                        }
-                        if (msg.serverContent?.turnComplete) {
-                            flushTranscription();
-                        }
-
-                        if (msg.toolCall?.functionCalls) {
-                            for (const fc of msg.toolCall.functionCalls) {
-                                const result = await executeMarkAsWatched(fc.args);
-                                sessionPromise.then(s => s.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result } } }));
-                            }
-                        }
-                        const audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-                        if (audio) {
-                            setIsSpeaking(true);
-                            nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-                            const b64 = atob(audio);
-                            const bytes = new Uint8Array(b64.length);
-                            for (let i = 0; i < b64.length; i++) bytes[i] = b64.charCodeAt(i);
-                            const data16 = new Int16Array(bytes.buffer);
-                            const buffer = outputCtx.createBuffer(1, data16.length, 24000);
-                            const ch = buffer.getChannelData(0);
-                            for (let i = 0; i < data16.length; i++) ch[i] = data16[i] / 32768.0;
-                            const s = outputCtx.createBufferSource();
-                            s.buffer = buffer; s.connect(outputCtx.destination);
-                            s.onended = () => {
-                                sourcesRef.current.delete(s);
-                                if (!sourcesRef.current.size) setIsSpeaking(false);
-                            };
-                            s.start(nextStartTimeRef.current);
-                            nextStartTimeRef.current += buffer.duration;
-                            sourcesRef.current.add(s);
-                        }
-                    },
-                    onclose: stopVoiceMode,
-                    onerror: stopVoiceMode
-                }
-            });
-        } catch (e) { stopVoiceMode(); }
-    };
-
-    const handleSendText = async () => {
-        if (!input.trim()) return;
-        const msg = { id: Date.now(), role: 'user', text: input };
-        setMessages(p => [...p, msg]); setInput(''); setIsLoading(true);
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const chat = ai.chats.create({
-                model: 'gemini-3-flash-preview',
-                config: {
-                    systemInstruction: getSystemContext(),
-                    tools: [{ functionDeclarations: [markAsWatchedTool] }]
-                }
-            });
-            const res = await chat.sendMessage({ message: input });
-            if (res.functionCalls?.[0]) {
-                const tr = await executeMarkAsWatched(res.functionCalls[0].args);
-                const finalRes = await chat.sendMessage({ message: [{ functionResponse: { name: res.functionCalls[0].name, response: { result: tr } } }] });
-                setMessages(p => [...p, { id: Date.now(), role: 'model', text: finalRes.text }]);
-            } else { setMessages(p => [...p, { id: Date.now(), role: 'model', text: res.text }]); }
-        } catch (e) { setMessages(p => [...p, { id: Date.now(), role: 'model', text: 'Error.' }]); }
-        finally { setIsLoading(false); }
-    };
-
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
-
-    return (
-        <>
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className="fixed right-6 bottom-6 z-40 transition-all hover:scale-110 active:scale-95 group"
-            >
-                <div className="relative">
-                    <img
-                        src={whipyImage}
-                        alt="Whispy"
-                        className="w-64 h-64 object-contain drop-shadow-2xl"
-                    />
-                    {!isOpen && (
-                        <div className="absolute top-2 right-2 bg-indigo-600 rounded-full p-2 border-2 border-slate-900 group-hover:bg-indigo-500 transition-colors shadow-lg">
-                            <Sparkles size={14} className="text-white" />
-                        </div>
-                    )}
-                </div>
-            </button>
-
-
-            {isOpen && (
-                <div className="fixed right-6 bottom-24 w-80 sm:w-96 h-[500px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col z-40 animate-in slide-in-from-right-4 overflow-hidden">
-                    <div className="bg-slate-800 p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
-                        <div className="flex items-center gap-2"><Sparkles className="text-indigo-400" size={18} /><span className="font-bold text-white tracking-tight">Whispy</span></div>
-
-                        <button onClick={() => { stopVoiceMode(); setIsOpen(false); }} className="hover:bg-slate-700 p-1 rounded-full transition-colors"><X size={20} className="text-slate-400" /></button>
-                    </div>
-                    {isVoiceMode ? (
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-indigo-950/20">
-                            <VoiceVisualizer isUserTalking={isUserTalking} isBotTalking={isSpeaking} isConnected={isConnected} />
-
-                            <div className="mt-12 flex flex-col items-center gap-6">
-                                <div className="relative flex items-center justify-center">
-                                    <div className={`absolute inset-0 bg-indigo-500 rounded-full animate-ping opacity-20 ${isUserTalking ? 'block' : 'hidden'}`} />
-                                    <div className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 ${isSpeaking ? 'bg-pink-600 scale-110' : isUserTalking ? 'bg-indigo-600' : 'bg-slate-700'}`}>
-                                        {isSpeaking ? <Volume2 size={32} className="text-white" /> : <Mic size={32} className="text-white" />}
-                                    </div>
-                                </div>
-
-                                <button onClick={stopVoiceMode} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-8 py-3 rounded-full border border-red-500/30 font-bold flex items-center gap-2 transition-all active:scale-95">
-                                    <StopCircle size={20} /> Detener
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                                {messages.length === 0 && (
-                                    <div className="flex flex-col items-center justify-center h-full opacity-30 text-center px-8">
-                                        <Sparkles size={48} className="mb-4" />
-                                        <p className="text-sm font-medium">¿De qué te apetece hablar hoy?</p>
-                                    </div>
-                                )}
-                                {messages.map(m => (
-                                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`p-3 rounded-2xl text-sm max-w-[85%] shadow-md ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none'}`}>
-                                            <MessageRenderer text={m.text} onAdd={onAdd} />
-                                        </div>
-                                    </div>
-                                ))}
-                                {isLoading && <div className="flex justify-start"><div className="bg-slate-800 p-3 rounded-2xl rounded-tl-none"><Loader2 className="animate-spin opacity-50 text-indigo-400" size={18} /></div></div>}
-                                <div ref={messagesEndRef} />
-                            </div>
-                            <div className="p-3 bg-slate-800 border-t border-slate-700 flex gap-2 shrink-0">
-                                <button onClick={startVoiceMode} className="p-2 text-indigo-400 hover:bg-slate-700 rounded-full transition-colors" title="Modo Voz"><Mic size={22} /></button>
-                                <input
-                                    type="text"
-                                    value={input}
-                                    onChange={e => setInput(e.target.value)}
-                                    onKeyDown={e => e.key === 'Enter' && handleSendText()}
-                                    placeholder="Escribe algo..."
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-full px-4 py-2 text-sm focus:outline-none focus:border-indigo-500 transition-all text-white"
-                                />
-                                <button onClick={handleSendText} disabled={!input.trim() || isLoading} className="p-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><Send size={20} /></button>
-                            </div>
-                        </>
-                    )}
-                </div>
-            )}
-        </>
-    );
-};
-
-// --- SUB-COMPONENTS ---
-
-const MessageRenderer: React.FC<{ text: string, onAdd: (item: SearchResult) => void }> = ({ text, onAdd }) => {
-    // Splits text into chunks, separating the :::JSON::: feature
-    const parts = text.split(/(:::{.*?}:::)/g);
-
-    return (
-        <div className="space-y-2">
-            {parts.map((part, idx) => {
-                if (part.startsWith(':::{') && part.endsWith(':::')) {
-                    try {
-                        const jsonStr = part.slice(3, -3);
-                        const meta = JSON.parse(jsonStr);
-                        return <AddButton key={idx} meta={meta} onAdd={onAdd} />;
-                    } catch (e) {
-                        return null;
-                    }
-                }
-                if (!part.trim()) return null;
-                return (
-                    <div key={idx} className="markdown-content">
-                        <ReactMarkdown>{part}</ReactMarkdown>
-                    </div>
-                );
-            })}
-        </div>
-    );
-};
-
-const AddButton: React.FC<{ meta: any, onAdd: (item: SearchResult) => void }> = ({ meta, onAdd }) => {
-    const [loading, setLoading] = useState(false);
-    const [added, setAdded] = useState(false);
-
-    const handleClick = async () => {
-        if (added) return;
-        setLoading(true);
-        try {
-            const results = await searchMedia(meta.title);
-            const bestMatch = results[0];
-            if (bestMatch) {
-                onAdd(bestMatch);
-                setAdded(true);
-            }
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    if (added) {
-        return (
-            <div className="flex items-center gap-2 bg-green-900/30 text-green-400 p-2 rounded-lg text-xs font-bold border border-green-800 mt-2 mb-2">
-                <Check size={14} /> Añadido: {meta.title}
-            </div>
-        );
+    const match = items.find(i => i.title.toLowerCase() === title.toLowerCase());
+    if (match) {
+      const status = { ...match.userStatus };
+      targetIds.forEach(id => { status[id] = { watched: true, date: Date.now(), watchedEpisodes: [] }; });
+      onUpdate(match.id, { userStatus: status });
+      return `He marcado "${match.title}" para ${who}.`;
     }
 
-    return (
-        <button
-            onClick={handleClick}
-            disabled={loading}
-            className="w-full flex items-center justify-between bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg text-xs transition-colors border border-slate-600 mt-2 mb-2 group shadow-sm"
-        >
-            <span className="font-bold flex flex-col items-start text-left">
-                <span>{meta.title}</span>
-                <span className="text-[10px] text-slate-400 font-normal">{meta.year} • {meta.type}</span>
-            </span>
-            <span className="bg-indigo-600 group-hover:bg-indigo-500 p-1.5 rounded-md text-white transition-colors">
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            </span>
-        </button>
-    );
+    const res = await searchMedia(title);
+    if (!res.length) return `No encontré "${title}".`;
+    const initialStatus: any = {};
+    targetIds.forEach(id => { initialStatus[id] = { watched: true, date: Date.now(), watchedEpisodes: [] }; });
+    onAdd(res[0], initialStatus);
+    return `Añadido y marcado "${res[0].title}" para ${who}.`;
+  };
+
+  const appendMessage = (role: 'user' | 'model', text: string) => {
+    setMessages(prev => [...prev, { id: Date.now() + Math.random(), role, text }]);
+  };
+
+  const sendMessage = async (text: string) => {
+    if (!API_KEY) return;
+    const ai = new GoogleGenAI({ apiKey: API_KEY });
+    const userContent: Content = { role: 'user', parts: [{ text }] };
+    const nextHistory = [...history, userContent];
+
+    setIsLoading(true);
+    appendMessage('user', text);
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: nextHistory,
+        config: {
+          systemInstruction: getSystemContext(),
+          tools: [{ functionDeclarations: [markAsWatchedTool] }],
+          toolConfig: {
+            functionCallingConfig: {
+              mode: FunctionCallingConfigMode.AUTO,
+              allowedFunctionNames: ['markAsWatched'],
+            }
+          }
+        }
+      });
+
+      if (response.functionCalls && response.functionCalls.length > 0) {
+        const functionCallParts = response.functionCalls.map(call => createPartFromFunctionCall(call.name, call.args));
+        const modelFunctionContent: Content = { role: 'model', parts: functionCallParts };
+        const functionResponseParts = await Promise.all(response.functionCalls.map(async (call, index) => {
+          const result = await executeMarkAsWatched(call.args);
+          const responseId = call.id || `${Date.now()}-${index}`;
+          return createPartFromFunctionResponse(responseId, call.name, { result });
+        }));
+        const userFunctionContent: Content = { role: 'user', parts: functionResponseParts };
+
+        const followupHistory = [...nextHistory, modelFunctionContent, userFunctionContent];
+        const followup = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: followupHistory,
+          config: {
+            systemInstruction: getSystemContext(),
+          }
+        });
+
+        if (followup.text) {
+          appendMessage('model', followup.text);
+          setHistory([...followupHistory, { role: 'model', parts: [{ text: followup.text }] }]);
+        } else {
+          setHistory(followupHistory);
+        }
+      } else if (response.text) {
+        appendMessage('model', response.text);
+        setHistory([...nextHistory, { role: 'model', parts: [{ text: response.text }] }]);
+      } else {
+        setHistory(nextHistory);
+      }
+    } catch (e) {
+      appendMessage('model', 'Tuve un problema al responder. Intenta de nuevo.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    const current = input;
+    setInput('');
+    await sendMessage(current);
+  };
+
+  const startRecording = async () => {
+    if (!API_KEY) return;
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') return;
+
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.startAsync();
+      recordingRef.current = recording;
+      setIsRecording(true);
+    } catch (e) {
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recordingRef.current) return;
+    try {
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      setIsRecording(false);
+
+      if (uri) {
+        setIsLoading(true);
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        const transcription = await transcribeAudio(base64);
+        if (transcription) {
+          await sendMessage(transcription);
+        }
+      }
+    } catch (e) {
+      setIsRecording(false);
+      setIsLoading(false);
+    }
+  };
+
+  const transcribeAudio = async (base64: string) => {
+    if (!API_KEY) return '';
+    try {
+      const ai = new GoogleGenAI({ apiKey: API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { data: base64, mimeType: 'audio/m4a' } },
+            { text: 'Transcribe el audio en español. Responde solo con el texto transcrito.' }
+          ]
+        }]
+      });
+      return response.text?.trim() || '';
+    } catch (e) {
+      return '';
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Pressable onPress={() => setIsOpen(true)} className="absolute bottom-6 right-6 bg-slate-800 p-3 rounded-full">
+        <MessageSquare size={24} color="#fff" />
+      </Pressable>
+
+      <Modal visible={isOpen} animationType="slide" transparent>
+        <View className="flex-1 bg-slate-900/95 px-4 pt-10">
+          <View className="flex-row justify-between items-center mb-4">
+            <View className="flex-row items-center gap-2">
+              <Sparkles size={18} color="#f472b6" />
+              <Text className="text-white font-bold text-lg">Whisper Chat</Text>
+            </View>
+            <Pressable onPress={() => setIsOpen(false)} className="p-2 bg-slate-800 rounded-full">
+              <X size={18} color="#cbd5f5" />
+            </Pressable>
+          </View>
+
+          <ScrollView className="flex-1 mb-4">
+            {messages.length === 0 ? (
+              <View className="items-center justify-center py-10">
+                <View className="w-40 h-40 rounded-full bg-slate-800 items-center justify-center">
+                  <Text className="text-slate-500 text-xs">Whisper</Text>
+                </View>
+                <Text className="text-slate-400 mt-4 text-center">Pregunta por recomendaciones o registra lo que has visto.</Text>
+              </View>
+            ) : (
+              <View className="gap-3">
+                {messages.map(msg => (
+                  <View key={msg.id} className={`p-3 rounded-xl ${msg.role === 'user' ? 'bg-indigo-600/20' : 'bg-slate-800'}`}>
+                    {msg.role === 'model' ? (
+                      <Markdown style={{ body: { color: '#e2e8f0' } }}>{msg.text}</Markdown>
+                    ) : (
+                      <Text className="text-white">{msg.text}</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
+
+          <View className="flex-row items-center gap-2 mb-4">
+            <TextInput
+              value={input}
+              onChangeText={setInput}
+              placeholder="Escribe un mensaje..."
+              placeholderTextColor="#64748b"
+              className="flex-1 bg-slate-800 text-white rounded-xl px-4 py-3"
+            />
+            <Pressable onPress={handleSend} disabled={isLoading || !input.trim()} className={`p-3 rounded-xl bg-indigo-600 ${isLoading || !input.trim() ? 'opacity-50' : ''}`}>
+              <Send size={18} color="#fff" />
+            </Pressable>
+          </View>
+
+          <View className="flex-row items-center justify-between">
+            <Pressable onPress={isRecording ? stopRecording : startRecording} className={`flex-row items-center gap-2 px-4 py-2 rounded-full ${isRecording ? 'bg-red-600' : 'bg-slate-800'}`}>
+              {isRecording ? <StopCircle size={16} color="#fff" /> : <Mic size={16} color="#fff" />}
+              <Text className="text-white text-xs font-bold">{isRecording ? 'Detener' : 'Voz'}</Text>
+            </Pressable>
+            {isLoading && (
+              <View className="flex-row items-center gap-2">
+                <ActivityIndicator color="#fff" />
+                <Text className="text-slate-300 text-xs">Procesando...</Text>
+              </View>
+            )}
+            {!isLoading && (
+              <View className="flex-row items-center gap-2">
+                <Volume2 size={14} color="#64748b" />
+                <Text className="text-slate-500 text-xs">Texto y voz</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
 };
 
 export default WhisperChat;
