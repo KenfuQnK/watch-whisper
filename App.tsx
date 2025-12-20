@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, ListFilter, Film, Tv, Download, Upload, Filter, Calendar, Loader2, Ban } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { View, Text, Pressable, ScrollView, FlatList, useWindowDimensions, ActivityIndicator } from 'react-native';
+import { Plus, ListFilter, Film, Tv } from 'lucide-react-native';
 import { MediaItem, User, MediaType, CollectionType, SearchResult, WatchInfo } from './types';
 import MediaCard from './components/MediaCard';
 import WatchedModal from './components/WatchedModal';
@@ -25,6 +26,7 @@ const App: React.FC = () => {
   const [userFilter, setUserFilter] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const { width } = useWindowDimensions();
 
   useEffect(() => {
     const loadData = async (isInitial = false) => {
@@ -43,7 +45,7 @@ const App: React.FC = () => {
       const updated = items.find(i => i.id === selectedItem.id);
       if (updated) setSelectedItem(updated);
     }
-  }, [items]);
+  }, [items, selectedItem]);
 
   const getTotalEpisodes = (item: MediaItem) => item.type === MediaType.MOVIE ? 1 : item.seasons?.reduce((acc, s) => acc + s.episodeCount, 0) || 0;
 
@@ -98,7 +100,6 @@ const App: React.FC = () => {
   const handleAddItem = async (result: SearchResult, initialUserStatus?: Record<string, WatchInfo>) => {
     if (items.some(i => i.title === result.title && i.year === result.year)) return;
 
-    // Fetch full details including episodes and platforms
     const finalResult = await getSeriesDetails(result);
     let userStatus = initialUserStatus || {};
 
@@ -143,58 +144,114 @@ const App: React.FC = () => {
     await deleteMediaItem(itemId);
   };
 
-  if (isLoading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin mr-2" /> Cargando...</div>;
+  const columnCount = width >= 1000 ? 5 : width >= 768 ? 4 : width >= 560 ? 3 : 2;
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-900">
+        <View className="flex-row items-center">
+          <ActivityIndicator color="#fff" />
+          <Text className="text-white ml-2">Cargando...</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 pb-20">
-      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-pink-500 flex items-center justify-center font-bold text-white tracking-widest text-sm">WW</div>
-            <h1 className="text-xl font-bold tracking-tight">Watch Whisper <span className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</span></h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex gap-3">{USERS.map(u => <Avatar key={u.id} user={u} size="sm" className="border-slate-800 shadow-sm" />)}</div>
-          </div>
-        </div>
-        <div className="max-w-6xl mx-auto px-4 flex gap-6 overflow-x-auto no-scrollbar mt-2 md:mt-0">
-          <button onClick={() => setActiveTab('pending')} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'pending' ? 'border-indigo-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Pendientes <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.pending}</span></button>
-          <button onClick={() => setActiveTab('inprogress')} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'inprogress' ? 'border-orange-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>A Medias <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.inprogress}</span></button>
-          <button onClick={() => setActiveTab('finished')} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'finished' ? 'border-green-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Terminados <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.finished}</span></button>
-          <button onClick={() => setActiveTab('discarded')} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeTab === 'discarded' ? 'border-red-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Descartados <span className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.discarded}</span></button>
-        </div>
-      </header>
+    <View className="flex-1 bg-slate-900">
+      <View className="bg-slate-900/80 border-b border-slate-800">
+        <View className="px-4 py-4 flex-col gap-4">
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <View className="w-10 h-8 rounded-lg bg-indigo-500 items-center justify-center">
+                <Text className="font-bold text-white tracking-widest text-sm">WW</Text>
+              </View>
+              <Text className="text-xl font-bold text-white">Watch Whisper <Text className="text-[10px] text-slate-500 border border-slate-700 rounded px-1 ml-1">CLOUD</Text></Text>
+            </View>
+            <View className="flex-row gap-3">
+              {USERS.map(u => <Avatar key={u.id} user={u} size="sm" className="border-slate-800" />)}
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row gap-6">
+            <Pressable onPress={() => setActiveTab('pending')} className={`pb-3 flex-row items-center gap-2 ${activeTab === 'pending' ? 'border-b-2 border-indigo-500' : ''}`}>
+              <Text className={activeTab === 'pending' ? 'text-white font-medium' : 'text-slate-500 font-medium'}>Pendientes</Text>
+              <Text className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.pending}</Text>
+            </Pressable>
+            <Pressable onPress={() => setActiveTab('inprogress')} className={`pb-3 flex-row items-center gap-2 ${activeTab === 'inprogress' ? 'border-b-2 border-orange-500' : ''}`}>
+              <Text className={activeTab === 'inprogress' ? 'text-white font-medium' : 'text-slate-500 font-medium'}>A Medias</Text>
+              <Text className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.inprogress}</Text>
+            </Pressable>
+            <Pressable onPress={() => setActiveTab('finished')} className={`pb-3 flex-row items-center gap-2 ${activeTab === 'finished' ? 'border-b-2 border-green-500' : ''}`}>
+              <Text className={activeTab === 'finished' ? 'text-white font-medium' : 'text-slate-500 font-medium'}>Terminados</Text>
+              <Text className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.finished}</Text>
+            </Pressable>
+            <Pressable onPress={() => setActiveTab('discarded')} className={`pb-3 flex-row items-center gap-2 ${activeTab === 'discarded' ? 'border-b-2 border-red-500' : ''}`}>
+              <Text className={activeTab === 'discarded' ? 'text-white font-medium' : 'text-slate-500 font-medium'}>Descartados</Text>
+              <Text className="bg-slate-800 px-2 rounded-full text-xs text-slate-400">{counts.discarded}</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-          <div className="flex bg-slate-800 p-1 rounded-lg">
-            <button onClick={() => setActiveFilter('all')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeFilter === 'all' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Todo</button>
-            <button onClick={() => setActiveFilter(MediaType.MOVIE)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${activeFilter === MediaType.MOVIE ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><Film size={12} /> Pelis</button>
-            <button onClick={() => setActiveFilter(MediaType.SERIES)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${activeFilter === MediaType.SERIES ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><Tv size={12} /> Series</button>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setUserFilter(userFilter === USERS[0].id ? null : USERS[0].id)} className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${userFilter === USERS[0].id ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300' : 'bg-slate-800 border-transparent text-slate-400 hover:bg-slate-700'}`}>{USERS[0].name}</button>
-            <button onClick={() => setUserFilter(userFilter === USERS[1].id ? null : USERS[1].id)} className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${userFilter === USERS[1].id ? 'bg-pink-500/20 border-pink-500 text-pink-300' : 'bg-slate-800 border-transparent text-slate-400 hover:bg-slate-700'}`}>{USERS[1].name}</button>
-          </div>
-        </div>
+      <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 120 }}>
+        <View className="px-4 py-6">
+          <View className="flex-col gap-4 mb-6">
+            <View className="flex-row bg-slate-800 p-1 rounded-lg">
+              <Pressable onPress={() => setActiveFilter('all')} className={`px-3 py-1.5 rounded-md ${activeFilter === 'all' ? 'bg-slate-700' : ''}`}>
+                <Text className={activeFilter === 'all' ? 'text-white text-xs font-medium' : 'text-slate-400 text-xs font-medium'}>Todo</Text>
+              </Pressable>
+              <Pressable onPress={() => setActiveFilter(MediaType.MOVIE)} className={`px-3 py-1.5 rounded-md flex-row items-center gap-1 ${activeFilter === MediaType.MOVIE ? 'bg-slate-700' : ''}`}>
+                <Film size={12} color={activeFilter === MediaType.MOVIE ? '#fff' : '#94a3b8'} />
+                <Text className={activeFilter === MediaType.MOVIE ? 'text-white text-xs font-medium' : 'text-slate-400 text-xs font-medium'}>Pelis</Text>
+              </Pressable>
+              <Pressable onPress={() => setActiveFilter(MediaType.SERIES)} className={`px-3 py-1.5 rounded-md flex-row items-center gap-1 ${activeFilter === MediaType.SERIES ? 'bg-slate-700' : ''}`}>
+                <Tv size={12} color={activeFilter === MediaType.SERIES ? '#fff' : '#94a3b8'} />
+                <Text className={activeFilter === MediaType.SERIES ? 'text-white text-xs font-medium' : 'text-slate-400 text-xs font-medium'}>Series</Text>
+              </Pressable>
+            </View>
+            <View className="flex-row gap-2">
+              <Pressable onPress={() => setUserFilter(userFilter === USERS[0].id ? null : USERS[0].id)} className={`px-3 py-1.5 rounded-full border ${userFilter === USERS[0].id ? 'bg-indigo-500/20 border-indigo-500' : 'bg-slate-800 border-transparent'}`}>
+                <Text className={userFilter === USERS[0].id ? 'text-indigo-300 text-xs font-bold' : 'text-slate-400 text-xs font-bold'}>{USERS[0].name}</Text>
+              </Pressable>
+              <Pressable onPress={() => setUserFilter(userFilter === USERS[1].id ? null : USERS[1].id)} className={`px-3 py-1.5 rounded-full border ${userFilter === USERS[1].id ? 'bg-pink-500/20 border-pink-500' : 'bg-slate-800 border-transparent'}`}>
+                <Text className={userFilter === USERS[1].id ? 'text-pink-300 text-xs font-bold' : 'text-slate-400 text-xs font-bold'}>{USERS[1].name}</Text>
+              </Pressable>
+            </View>
+          </View>
 
-        {filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-            <ListFilter size={48} className="mb-4 opacity-50" /><p className="text-lg">No hay nada por aquí.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
-            {filteredItems.map(item => <MediaCard key={item.id} item={item} users={USERS} onClick={(i) => setSelectedItem(i)} />)}
-          </div>
-        )}
-      </main>
+          {filteredItems.length === 0 ? (
+            <View className="items-center justify-center py-20">
+              <ListFilter size={48} color="#64748b" />
+              <Text className="text-lg text-slate-500 mt-4">No hay nada por aquí.</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredItems}
+              key={columnCount}
+              keyExtractor={(item) => item.id}
+              numColumns={columnCount}
+              columnWrapperStyle={{ gap: 12, marginBottom: 12 }}
+              renderItem={({ item }) => (
+                <MediaCard
+                  item={item}
+                  users={USERS}
+                  onClick={(i) => setSelectedItem(i)}
+                  columns={columnCount}
+                />
+              )}
+            />
+          )}
+        </View>
+      </ScrollView>
 
       <WhisperChat items={items} users={USERS} onAdd={handleAddItem} onUpdate={handleUpdateItem} />
-      <button onClick={() => setIsSearchOpen(true)} className="fixed bottom-6 left-6 bg-indigo-600 hover:bg-indigo-500 text-white p-4 rounded-full shadow-2xl transition-transform hover:scale-110 active:scale-95 z-30 flex items-center justify-center"><Plus size={28} /></button>
+      <Pressable onPress={() => setIsSearchOpen(true)} className="absolute bottom-6 left-6 bg-indigo-600 p-4 rounded-full shadow-2xl">
+        <Plus size={28} color="#fff" />
+      </Pressable>
 
       <WatchedModal isOpen={!!selectedItem} item={selectedItem} users={USERS} onClose={() => setSelectedItem(null)} onUpdateItem={handleUpdateItem} onUpdateStatus={() => { }} onDelete={handleDelete} />
       <SearchOverlay isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onAdd={(result) => handleAddItem(result)} />
-    </div>
+    </View>
   );
 };
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Search, Loader2, Plus, AlertCircle, Edit3, Film, Tv, Sparkles, X } from 'lucide-react';
-import { searchMedia } from '../services/gemini'; // Keeping filename but using new logic
+import { Modal, View, Text, Pressable, TextInput, ScrollView, Image } from 'react-native';
+import { Search, Plus, AlertCircle, Edit3, Film, Tv, X } from 'lucide-react-native';
+import { searchMedia } from '../services/gemini';
 import { SearchResult, MediaType } from '../types';
 
 interface SearchOverlayProps {
@@ -11,21 +12,14 @@ interface SearchOverlayProps {
 
 const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd }) => {
   const [mode, setMode] = useState<'api' | 'manual'>('api');
-  
-  // Search State
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
-
-  // Manual State
   const [manualTitle, setManualTitle] = useState('');
   const [manualType, setManualType] = useState<MediaType>(MediaType.MOVIE);
 
-  if (!isOpen) return null;
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSearch = async () => {
     if (!query.trim()) return;
 
     setIsLoading(true);
@@ -37,28 +31,27 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
       if (data && data.length > 0) {
         setResults(data);
       } else {
-        setError("No encontramos nada. Intenta otro título o usa el modo Manual.");
+        setError('No encontramos nada. Intenta otro título o usa el modo Manual.');
       }
     } catch (err) {
-      setError("Error de conexión con las bases de datos.");
+      setError('Error de conexión con las bases de datos.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleManualAdd = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleManualAdd = () => {
     if (!manualTitle.trim()) return;
 
     const manualResult: SearchResult = {
-        id: `manual-${Date.now()}`,
-        externalId: Date.now(),
-        source: 'manual',
-        title: manualTitle,
-        type: manualType,
-        year: new Date().getFullYear().toString(),
-        description: 'Añadido manualmente',
-        posterUrl: '', // Will fallback to text
+      id: `manual-${Date.now()}`,
+      externalId: Date.now(),
+      source: 'manual',
+      title: manualTitle,
+      type: manualType,
+      year: new Date().getFullYear().toString(),
+      description: 'Añadido manualmente',
+      posterUrl: '',
     };
     onAdd(manualResult);
     onClose();
@@ -66,168 +59,165 @@ const SearchOverlay: React.FC<SearchOverlayProps> = ({ isOpen, onClose, onAdd })
   };
 
   const resetState = () => {
-      setQuery('');
-      setResults([]);
-      setManualTitle('');
-      setMode('api');
+    setQuery('');
+    setResults([]);
+    setManualTitle('');
+    setMode('api');
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col items-center pt-10 px-4 bg-slate-900/95 backdrop-blur-md">
-      <div className="w-full max-w-4xl flex flex-col h-full max-h-[90vh]">
-        
-        {/* Header */}
-        <div className="flex justify-between items-center mb-6 shrink-0">
-            <h2 className="text-3xl font-bold text-white">
-                Añadir Título
-            </h2>
-            <button onClick={onClose} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
-                <X size={24} />
-            </button>
-        </div>
+    <Modal visible={isOpen} animationType="slide" transparent>
+      <View className="flex-1 bg-slate-900/95 px-4 pt-10">
+        <View className="flex-1 max-h-[90%]">
+          <View className="flex-row justify-between items-center mb-6">
+            <Text className="text-3xl font-bold text-white">Añadir Título</Text>
+            <Pressable onPress={onClose} className="p-2 bg-slate-800 rounded-full">
+              <X size={24} color="#cbd5f5" />
+            </Pressable>
+          </View>
 
-        {/* Tabs */}
-        <div className="flex p-1 bg-slate-800 rounded-xl mb-6 shrink-0">
-            <button 
-                onClick={() => setMode('api')}
-                className={`flex-1 py-3 text-sm font-bold rounded-lg flex items-center justify-center gap-2 transition-all ${mode === 'api' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+          <View className="flex-row p-1 bg-slate-800 rounded-xl mb-6">
+            <Pressable
+              onPress={() => setMode('api')}
+              className={`flex-1 py-3 rounded-lg flex-row items-center justify-center gap-2 ${mode === 'api' ? 'bg-indigo-600' : ''}`}
             >
-                <Search size={16} /> Búsqueda Rápida
-            </button>
-            <button 
-                onClick={() => setMode('manual')}
-                className={`flex-1 py-3 text-sm font-bold rounded-lg flex items-center justify-center gap-2 transition-all ${mode === 'manual' ? 'bg-slate-700 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+              <Search size={16} color={mode === 'api' ? '#fff' : '#94a3b8'} />
+              <Text className={mode === 'api' ? 'text-white font-bold text-sm' : 'text-slate-400 font-bold text-sm'}>Búsqueda Rápida</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setMode('manual')}
+              className={`flex-1 py-3 rounded-lg flex-row items-center justify-center gap-2 ${mode === 'manual' ? 'bg-slate-700' : ''}`}
             >
-                <Edit3 size={16} /> Manual
-            </button>
-        </div>
+              <Edit3 size={16} color={mode === 'manual' ? '#fff' : '#94a3b8'} />
+              <Text className={mode === 'manual' ? 'text-white font-bold text-sm' : 'text-slate-400 font-bold text-sm'}>Manual</Text>
+            </Pressable>
+          </View>
 
-        {/* CONTENT AREA */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-            
-            {/* API MODE */}
+          <ScrollView className="flex-1">
             {mode === 'api' && (
-                <>
-                    <form onSubmit={handleSearch} className="relative mb-6">
-                        <input
-                            type="text"
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            placeholder="Avengers, Game of Thrones..."
-                            className="w-full bg-slate-800 border-2 border-slate-700 text-white rounded-2xl py-4 pl-14 pr-14 text-lg focus:outline-none focus:border-indigo-500 focus:bg-slate-800/50 transition-all placeholder:text-slate-500"
-                            autoFocus
-                        />
-                        <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-slate-400" size={24} />
-                        {query && (
-                             <button 
-                                type="button" 
-                                onClick={() => setQuery('')}
-                                className="absolute right-16 top-1/2 transform -translate-y-1/2 text-slate-500 hover:text-slate-300 p-2"
-                             >
-                                 <X size={20} />
-                             </button>
-                        )}
-                        <button 
-                            type="submit"
-                            disabled={isLoading || !query}
-                            className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-2.5 rounded-xl transition-all shadow-lg"
-                        >
-                            {isLoading ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
-                        </button>
-                    </form>
-
-                    {error && (
-                        <div className="flex items-center gap-2 text-red-400 bg-red-400/10 p-4 rounded-xl mb-6 animate-pulse">
-                            <AlertCircle size={20} />
-                            <p>{error}</p>
-                        </div>
-                    )}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-10">
-                        {results.map((result) => (
-                            <div key={result.id} className="bg-slate-800 rounded-xl p-3 flex gap-4 hover:bg-slate-700/50 transition-colors group">
-                                <div className="w-20 aspect-[2/3] bg-slate-900 rounded-lg overflow-hidden shrink-0 relative">
-                                    {result.posterUrl ? (
-                                        <img src={result.posterUrl} alt={result.title} className="w-full h-full object-cover" />
-                                    ) : (
-                                        <div className="w-full h-full flex items-center justify-center bg-slate-800 text-xs text-center p-1 text-slate-500 font-bold">Sin Foto</div>
-                                    )}
-                                </div>
-                                <div className="flex-1 flex flex-col justify-between py-1">
-                                    <div>
-                                        <h3 className="font-bold text-white leading-tight mb-1">{result.title}</h3>
-                                        <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-                                            <span className="uppercase tracking-wider font-bold bg-slate-900/50 px-1.5 py-0.5 rounded">
-                                                {result.type === MediaType.MOVIE ? 'Película' : 'Serie'}
-                                            </span>
-                                            <span>{result.year}</span>
-                                        </div>
-                                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                                            {result.description}
-                                        </p>
-                                    </div>
-                                    <button 
-                                        onClick={() => { onAdd(result); onClose(); resetState(); }}
-                                        className="mt-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all w-full"
-                                    >
-                                        <Plus size={16} /> Seleccionar
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </>
-            )}
-
-            {/* MANUAL MODE */}
-            {mode === 'manual' && (
-                <form onSubmit={handleManualAdd} className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                    <div className="mb-6">
-                        <label className="block text-slate-400 text-sm font-bold mb-2">Título</label>
-                        <input
-                            type="text"
-                            value={manualTitle}
-                            onChange={(e) => setManualTitle(e.target.value)}
-                            placeholder="Ej: Breaking Bad"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:border-indigo-500"
-                            required
-                        />
-                    </div>
-
-                    <div className="mb-8">
-                        <label className="block text-slate-400 text-sm font-bold mb-2">Tipo</label>
-                        <div className="grid grid-cols-2 gap-4">
-                            <button
-                                type="button"
-                                onClick={() => setManualType(MediaType.MOVIE)}
-                                className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${manualType === MediaType.MOVIE ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500 hover:border-slate-600'}`}
-                            >
-                                <Film size={24} />
-                                <span className="font-bold">Película</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setManualType(MediaType.SERIES)}
-                                className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${manualType === MediaType.SERIES ? 'border-pink-500 bg-pink-500/10 text-white' : 'border-slate-700 text-slate-500 hover:border-slate-600'}`}
-                            >
-                                <Tv size={24} />
-                                <span className="font-bold">Serie</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <button 
-                        type="submit"
-                        disabled={!manualTitle}
-                        className="w-full bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform active:scale-95"
+              <View>
+                <View className="relative mb-6">
+                  <View className="flex-row items-center bg-slate-800 border-2 border-slate-700 rounded-2xl px-4 py-3">
+                    <Search size={20} color="#94a3b8" />
+                    <TextInput
+                      value={query}
+                      onChangeText={setQuery}
+                      placeholder="Avengers, Game of Thrones..."
+                      placeholderTextColor="#64748b"
+                      className="flex-1 text-white text-base ml-3"
+                    />
+                    {query ? (
+                      <Pressable onPress={() => setQuery('')} className="p-2">
+                        <X size={18} color="#94a3b8" />
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={handleSearch}
+                      disabled={isLoading || !query}
+                      className={`ml-2 bg-indigo-600 rounded-xl p-2 ${isLoading || !query ? 'opacity-50' : ''}`}
                     >
-                        <Plus size={20} /> Crear Card
-                    </button>
-                </form>
+                      <Search size={18} color="#fff" />
+                    </Pressable>
+                  </View>
+                </View>
+
+                {error && (
+                  <View className="flex-row items-center gap-2 bg-red-400/10 p-4 rounded-xl mb-6">
+                    <AlertCircle size={20} color="#f87171" />
+                    <Text className="text-red-400">{error}</Text>
+                  </View>
+                )}
+
+                <View className="gap-4 pb-10">
+                  {results.map((result) => (
+                    <View key={result.id} className="bg-slate-800 rounded-xl p-3 flex-row gap-4">
+                      <View className="w-20 aspect-[2/3] bg-slate-900 rounded-lg overflow-hidden">
+                        {result.posterUrl ? (
+                          <Image source={{ uri: result.posterUrl }} style={{ width: '100%', height: '100%' }} />
+                        ) : (
+                          <View className="w-full h-full items-center justify-center bg-slate-800">
+                            <Text className="text-xs text-slate-500 font-bold">Sin Foto</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View className="flex-1 justify-between">
+                        <View>
+                          <Text className="font-bold text-white mb-1" numberOfLines={2}>{result.title}</Text>
+                          <View className="flex-row items-center gap-2 mb-2">
+                            <View className="bg-slate-900/50 px-2 py-1 rounded">
+                              <Text className="text-xs text-slate-300 font-bold uppercase">
+                                {result.type === MediaType.MOVIE ? 'Película' : 'Serie'}
+                              </Text>
+                            </View>
+                            <Text className="text-xs text-slate-400">{result.year}</Text>
+                          </View>
+                          <Text className="text-xs text-slate-500" numberOfLines={2}>{result.description}</Text>
+                        </View>
+                        <Pressable
+                          onPress={() => { onAdd(result); onClose(); resetState(); }}
+                          className="mt-3 bg-green-600/20 py-2 rounded-lg"
+                        >
+                          <View className="flex-row items-center justify-center gap-2">
+                            <Plus size={16} color="#86efac" />
+                            <Text className="text-sm font-bold text-green-400">Seleccionar</Text>
+                          </View>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
             )}
-        </div>
-      </div>
-    </div>
+
+            {mode === 'manual' && (
+              <View className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                <View className="mb-6">
+                  <Text className="text-slate-400 text-sm font-bold mb-2">Título</Text>
+                  <TextInput
+                    value={manualTitle}
+                    onChangeText={setManualTitle}
+                    placeholder="Ej: Breaking Bad"
+                    placeholderTextColor="#64748b"
+                    className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-white"
+                  />
+                </View>
+
+                <View className="mb-8">
+                  <Text className="text-slate-400 text-sm font-bold mb-2">Tipo</Text>
+                  <View className="flex-row gap-4">
+                    <Pressable
+                      onPress={() => setManualType(MediaType.MOVIE)}
+                      className={`flex-1 p-4 rounded-xl border-2 items-center gap-2 ${manualType === MediaType.MOVIE ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700'}`}
+                    >
+                      <Film size={24} color={manualType === MediaType.MOVIE ? '#fff' : '#94a3b8'} />
+                      <Text className={manualType === MediaType.MOVIE ? 'font-bold text-white' : 'font-bold text-slate-500'}>Película</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setManualType(MediaType.SERIES)}
+                      className={`flex-1 p-4 rounded-xl border-2 items-center gap-2 ${manualType === MediaType.SERIES ? 'border-pink-500 bg-pink-500/10' : 'border-slate-700'}`}
+                    >
+                      <Tv size={24} color={manualType === MediaType.SERIES ? '#fff' : '#94a3b8'} />
+                      <Text className={manualType === MediaType.SERIES ? 'font-bold text-white' : 'font-bold text-slate-500'}>Serie</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={handleManualAdd}
+                  disabled={!manualTitle}
+                  className={`w-full bg-green-600 py-3 rounded-xl ${!manualTitle ? 'opacity-50' : ''}`}
+                >
+                  <View className="flex-row items-center justify-center gap-2">
+                    <Plus size={20} color="#fff" />
+                    <Text className="text-white font-bold">Crear Card</Text>
+                  </View>
+                </Pressable>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 };
 
